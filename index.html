@@ -1385,6 +1385,8 @@ async function finalizeSwap(choice){
   renderHolidayList();
   renderCalendarTab();
 }
+
+function styleSelect(sel){
   const shift = shiftTypes.find(s=>s.id===sel.value);
   if(shift){
     sel.style.background = shift.color || '#F2A93B';
