@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<title>Shift Rota → Calendar</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#1B1E26;
+    --surface:#242833;
+    --surface-alt:#2D323F;
+    --border:#3A3F4D;
+    --text:#F2EFE9;
+    --text-dim:#9BA3B0;
+    --amber:#F2A93B;
+    --amber-dim:#6B5530;
+    --teal:#43C6AC;
+    --danger:#E2574C;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter',system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding-bottom:60px;
+  }
+  .wrap{max-width:680px;margin:0 auto;padding:20px 16px 0;}
+  header{margin-bottom:24px;}
+  .eyebrow{
+    font-family:'Oswald',sans-serif;
+    font-size:11px;
+    letter-spacing:.18em;
+    text-transform:uppercase;
+    color:var(--amber);
+    margin:0 0 6px;
+  }
+  h1{
+    font-family:'Oswald',sans-serif;
+    font-size:28px;
+    font-weight:600;
+    letter-spacing:.01em;
+    margin:0 0 6px;
+    text-transform:uppercase;
+  }
+  .sub{color:var(--text-dim);font-size:14px;margin:0;line-height:1.5;}
+  section{
+    background:var(--surface);
+    border:1px solid var(--border);
+    border-radius:10px;
+    padding:16px;
+    margin-bottom:16px;
+  }
+  .sec-title{
+    font-family:'Oswald',sans-serif;
+    font-size:13px;
+    letter-spacing:.1em;
+    text-transform:uppercase;
+    color:var(--text-dim);
+    margin:0 0 12px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+  }
+  .sec-num{
+    width:22px;height:22px;border-radius:5px;
+    background:var(--amber-dim);color:var(--amber);
+    display:flex;align-items:center;justify-content:center;
+    font-size:12px;font-weight:700;flex-shrink:0;
+  }
+  label{font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px;}
+  input[type=text], input[type=time], input[type=date], select{
+    background:var(--surface-alt);
+    border:1px solid var(--border);
+    color:var(--text);
+    border-radius:7px;
+    padding:9px 10px;
+    font-size:14px;
+    font-family:inherit;
+    width:100%;
+  }
+  input:focus, select:focus{outline:2px solid var(--amber);outline-offset:1px;}
+  .row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
+  .row > div{flex:1;min-width:90px;}
+  .btn{
+    background:var(--amber);
+    color:#1B1E26;
+    border:none;
+    border-radius:7px;
+    padding:10px 16px;
+    font-weight:600;
+    font-size:14px;
+    cursor:pointer;
+    font-family:inherit;
+  }
+  .btn:active{transform:translateY(1px);}
+  .btn.secondary{
+    background:transparent;
+    color:var(--text);
+    border:1px solid var(--border);
+  }
+  .btn.full{width:100%;}
+  .chip-list{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px;}
+  .chip{
+    display:flex;align-items:center;gap:8px;
+    border-radius:7px;
+    padding:7px 10px;
+    font-size:13px;
+    font-weight:600;
+    color:#1B1E26;
+  }
+  .chip button{
+    background:rgba(0,0,0,.18);
+    border:none;color:#1B1E26;
+    width:18px;height:18px;border-radius:50%;
+    cursor:pointer;font-size:12px;line-height:1;
+    display:flex;align-items:center;justify-content:center;
+  }
+  .checkbox-row{display:flex;align-items:center;gap:7px;margin-bottom:10px;}
+  .checkbox-row input{width:auto;}
+  .checkbox-row label{margin:0;color:var(--text);font-size:13px;}
+  .grid{
+    display:grid;
+    grid-template-columns:repeat(7,1fr);
+    gap:6px;
+  }
+  .day-label{
+    font-size:10px;
+    color:var(--text-dim);
+    text-align:center;
+    text-transform:uppercase;
+    letter-spacing:.05em;
+  }
+  .week-row{display:contents;}
+  .week-marker{
+    grid-column:1/-1;
+    font-family:'Oswald',sans-serif;
+    font-size:11px;
+    letter-spacing:.1em;
+    color:var(--text-dim);
+    margin-top:8px;
+    text-transform:uppercase;
+  }
+  .day-cell select{
+    width:100%;
+    padding:8px 4px;
+    font-size:11px;
+    text-align:center;
+    border-radius:6px;
+    font-weight:600;
+    appearance:none;
+    -webkit-appearance:none;
+  }
+  .off-list{display:flex;flex-direction:column;gap:8px;margin-top:10px;}
+  .off-item{
+    display:flex;align-items:center;justify-content:space-between;
+    background:var(--surface-alt);
+    border:1px solid var(--border);
+    border-radius:7px;
+    padding:8px 10px;
+    font-size:13px;
+  }
+  .off-item button{
+    background:none;border:none;color:var(--danger);
+    cursor:pointer;font-size:13px;font-weight:600;
+  }
+  .help{font-size:12px;color:var(--text-dim);line-height:1.5;margin-top:10px;}
+  .week-totals{margin-top:14px;border-top:1px solid var(--border);padding-top:10px;}
+  .week-total-row{
+    display:flex;justify-content:space-between;align-items:center;
+    padding:6px 0;font-size:13px;color:var(--text-dim);
+  }
+  .week-total-row strong{color:var(--text);font-weight:600;}
+  .week-total-row.total{
+    border-top:1px solid var(--border);
+    margin-top:4px;padding-top:10px;
+    color:var(--text);
+  }
+  .week-total-row.total strong{color:var(--amber);font-size:15px;}
+  .range-row{display:flex;gap:8px;align-items:flex-end;}
+  .range-row > div{flex:1;}
+  .status{
+    font-size:12px;color:var(--teal);min-height:16px;margin-top:8px;
+  }
+  footer{text-align:center;color:var(--text-dim);font-size:11px;padding:20px 0;}
+  .empty{color:var(--text-dim);font-size:13px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">5-Week Rota</p>
+    <h1>Shift Rota → Calendar</h1>
+    <p class="sub">Set up your rotating shift pattern once, mark booked days off, then export a calendar file you can import into Outlook and share with anyone.</p>
+  </header>
+
+  <section>
+    <p class="sec-title"><span class="sec-num">1</span>Your shift types</p>
+    <div class="row">
+      <div><label>Name</label><input type="text" id="st-name" placeholder="e.g. Early, Late, Night"></div>
+    </div>
+    <div class="checkbox-row">
+      <input type="checkbox" id="st-allday">
+      <label for="st-allday">No fixed time (all-day / flexible)</label>
+    </div>
+    <div class="row" id="st-time-row">
+      <div><label>Start time</label><input type="time" id="st-start" value="09:00"></div>
+      <div><label>End time</label><input type="time" id="st-end" value="17:00"></div>
+    </div>
+    <div class="row">
+      <div>
+        <label>Paid hours (HH:MM)</label>
+        <input type="text" id="st-paid" placeholder="e.g. 08:43">
+      </div>
+    </div>
+    <p class="help" style="margin-top:0;margin-bottom:10px;">Leave paid hours blank to use the raw start–end duration. Set it explicitly if breaks are unpaid, or for shifts with no clock times (like "AR").</p>
+    <button class="btn full" onclick="addShiftType()">Add shift type</button>
+    <div class="chip-list" id="shift-type-list"></div>
+  </section>
+
+  <section>
+    <p class="sec-title"><span class="sec-num">2</span>Build your 5-week pattern</p>
+    <p class="help" style="margin-top:0;margin-bottom:12px;">Day 1 of Week 1 is whatever date you set below. Pick a shift for each day — leave as "—" for a day off in the normal pattern.</p>
+    <button class="btn secondary full" style="margin-bottom:12px;" onclick="loadPresetRota()">Load my rota from the photo</button>
+    <div id="pattern-grid"></div>
+    <div class="week-totals" id="week-totals"></div>
+  </section>
+
+  <section>
+    <p class="sec-title"><span class="sec-num">3</span>Rota start date</p>
+    <p class="help" style="margin-top:0;">The calendar date that lines up with Day 1, Week 1 above.</p>
+    <input type="date" id="rota-start">
+  </section>
+
+  <section>
+    <p class="sec-title"><span class="sec-num">4</span>Adjust specific days</p>
+    <p class="help" style="margin-top:0;">Use this for booked days off, one-off changes, or swapping shifts with someone — these always override the pattern above for that exact date.</p>
+
+    <p style="font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px;">Change a single day</p>
+    <div class="row">
+      <div><label>Date</label><input type="date" id="ov-date"></div>
+      <div><label>New shift</label>
+        <select id="ov-shift">
+          <option value="">Day off</option>
+          <option value="__holiday__">Holiday</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn secondary full" onclick="applyOverride()">Apply change</button>
+
+    <p style="font-size:12px;font-weight:600;color:var(--text-dim);text-transform:uppercase;letter-spacing:.05em;margin:18px 0 8px;">Book a holiday</p>
+    <div class="row">
+      <div><label>First day</label><input type="date" id="hol-start"></div>
+      <div><label>Last day</label><input type="date" id="hol-end"></div>
+    </div>
+    <button class="btn secondary full" onclick="bookHoliday()">Book holiday</button>
+
+    <div class="off-list" id="off-list"></div>
+  </section>
+
+  <section>
+    <p class="sec-title"><span class="sec-num">5</span>Pay rates</p>
+    <p class="help" style="margin-top:0;">Set your hourly rate for each kind of day — week totals above update automatically.</p>
+    <div class="row">
+      <div><label>£ / hr Mon–Fri</label><input type="text" inputmode="decimal" id="rate-weekday" placeholder="0.00"></div>
+      <div><label>£ / hr Saturday</label><input type="text" inputmode="decimal" id="rate-saturday" placeholder="0.00"></div>
+      <div><label>£ / hr Sunday</label><input type="text" inputmode="decimal" id="rate-sunday" placeholder="0.00"></div>
+    </div>
+  </section>
+
+  <section>
+    <p class="sec-title"><span class="sec-num">6</span>Generate your calendar</p>
+    <div class="range-row">
+      <div>
+        <label>Generate shifts for the next</label>
+        <select id="range-select">
+          <option value="3">3 months</option>
+          <option value="6" selected>6 months</option>
+          <option value="12">12 months</option>
+        </select>
+      </div>
+    </div>
+    <button class="btn full" style="margin-top:12px;" onclick="downloadICS()">Download calendar file (.ics)</button>
+    <div class="status" id="status"></div>
+    <div id="ics-fallback"></div>
+    <p class="help">
+      <strong>To use in Outlook:</strong> Calendar → Add calendar → Upload from file → select the downloaded .ics.<br>
+      <strong>To share:</strong> send that same file to anyone else, or once it's in Outlook, share that calendar from there. Whenever you add a new day off, re-download and re-import to update it.
+    </p>
+  </section>
+
+  <section>
+    <p class="sec-title"><span class="sec-num">7</span>Publish live calendar</p>
+    <p class="help" style="margin-top:0;">Give this link to anyone — it refreshes with whatever you last published here. Most calendar apps re-check it roughly once a day.</p>
+    <div class="row">
+      <div><label>Worker URL</label><input type="text" id="pub-url" placeholder="https://shift-rota.yourname.workers.dev"></div>
+    </div>
+    <div class="row">
+      <div><label>Secret password</label><input type="text" id="pub-secret" placeholder="the SECRET you set in Cloudflare"></div>
+    </div>
+    <button class="btn full" onclick="publishCalendar()">Publish live calendar</button>
+    <button class="btn secondary full" style="margin-top:8px;" onclick="loadFromLive()">Load from live calendar</button>
+    <div class="status" id="publish-status"></div>
+    <p class="help" id="publish-link-holder"></p>
+  </section>
+
+  <section>
+    <p class="sec-title"><span class="sec-num">8</span>Backup &amp; restore</p>
+    <p class="help" style="margin-top:0;">If automatic saving isn't sticking, back up your full setup to a file here, and restore it any time.</p>
+    <div class="row" style="margin-bottom:0;">
+      <button class="btn secondary" style="flex:1;" onclick="exportBackup()">Save backup file</button>
+      <button class="btn secondary" style="flex:1;" onclick="document.getElementById('restore-input').click()">Restore from file</button>
+    </div>
+    <input type="file" id="restore-input" accept="application/json,.json" style="display:none" onchange="importBackup(event)">
+    <div class="status" id="backup-status"></div>
+    <div id="backup-fallback"></div>
+  </section>
+
+  <footer>Your rota and settings are saved automatically in this app.</footer>
+</div>
+
+<script>
+const PALETTE = ['#F2A93B','#43C6AC','#8C7AE6','#E2574C','#4FA8E0','#B5CC4E','#E08FD0','#7F8C9A','#D9A6F2','#6FE0D1'];
+const DAY_LABELS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+let state = {
+  shiftTypes: [],   // {id, name, allDay, start, end, paidHours, color}
+  pattern: Array(35).fill(''), // shift id or '' for each of 35 days
+  rotaStart: '',
+  overrides: {}, // { 'YYYY-MM-DD': shiftId or '' for day off } — overrides the pattern for that date
+  rates: { weekday: 0, saturday: 0, sunday: 0 },
+  publish: { url: '', secret: '' }
+};
+
+let nextId = 1;
+
+function uid(){ return 's' + (nextId++); }
+
+async function loadState(){
+  let res = null;
+  try{
+    res = await store.get('shift-rota-state', false);
+  }catch(e){
+    storageWorks = false;
+  }
+  try{
+    if(res && res.value){
+      const parsed = JSON.parse(res.value);
+      state = Object.assign(state, parsed);
+      const maxId = state.shiftTypes.reduce((m,s)=>{
+        const n = parseInt((s.id||'s0').slice(1),10);
+        return isNaN(n) ? m : Math.max(m,n);
+      },0);
+      nextId = maxId + 1;
+    }
+  }catch(e){ /* no saved state yet */ }
+  if(state.daysOff && Array.isArray(state.daysOff)){
+    state.overrides = state.overrides || {};
+    state.daysOff.forEach(d => { if(!(d in state.overrides)) state.overrides[d] = ''; });
+    delete state.daysOff;
+  }
+  if(!state.overrides) state.overrides = {};
+  if(!state.rates) state.rates = { weekday: 0, saturday: 0, sunday: 0 };
+  if(!state.publish) state.publish = { url: '', secret: '' };
+  const isFresh = state.shiftTypes.length === 0 && state.pattern.every(p => !p);
+  if(!state.rotaStart){
+    const today = new Date();
+    state.rotaStart = today.toISOString().slice(0,10);
+  }
+  document.getElementById('rota-start').value = state.rotaStart;
+  document.getElementById('rate-weekday').value = state.rates.weekday || '';
+  document.getElementById('rate-saturday').value = state.rates.saturday || '';
+  document.getElementById('rate-sunday').value = state.rates.sunday || '';
+  document.getElementById('pub-url').value = state.publish.url || '';
+  document.getElementById('pub-secret').value = state.publish.secret || '';
+  if(isFresh){
+    loadPresetRota();
+  } else {
+    renderAll();
+  }
+}
+
+const hasCloudStorage = typeof window.storage !== 'undefined' && window.storage && typeof window.storage.get === 'function' && typeof window.storage.set === 'function';
+
+const localStore = {
+  async get(key){
+    const raw = localStorage.getItem(key);
+    if(raw === null) throw new Error('not found');
+    return { value: raw };
+  },
+  async set(key, value){
+    localStorage.setItem(key, value);
+    return { key, value };
+  }
+};
+
+const store = hasCloudStorage ? window.storage : localStore;
+
+let saveTimer = null;
+let saveInFlight = false;
+let savePending = false;
+let storageWorks = true;
+
+function saveState(){
+  if(saveTimer) clearTimeout(saveTimer);
+  saveTimer = setTimeout(runSave, 500);
+}
+
+async function runSave(){
+  if(saveInFlight){ savePending = true; return; }
+  saveInFlight = true;
+  try{
+    await store.set('shift-rota-state', JSON.stringify(state), false);
+    storageWorks = true;
+  }catch(e){
+    if(storageWorks){
+      storageWorks = false;
+      notifyStorageUnavailable();
+    }
+  }
+  saveInFlight = false;
+  if(savePending){
+    savePending = false;
+    runSave();
+  }
+}
+
+function notifyStorageUnavailable(){
+  const statusEl = document.getElementById('backup-status');
+  if(statusEl){
+    statusEl.style.color = 'var(--amber)';
+    statusEl.textContent = 'Auto-save isn\'t available right now. Your changes still work, but use "Save backup file" below before you close the app, and "Restore from file" next time you open it.';
+  }
+}
+
+document.getElementById('st-allday').addEventListener('change', (e)=>{
+  document.getElementById('st-time-row').style.display = e.target.checked ? 'none' : 'flex';
+});
+
+function addShiftType(){
+  const name = document.getElementById('st-name').value.trim();
+  if(!name){ return; }
+  const allDay = document.getElementById('st-allday').checked;
+  const start = document.getElementById('st-start').value;
+  const end = document.getElementById('st-end').value;
+  const paidHours = document.getElementById('st-paid').value.trim();
+  const color = PALETTE[state.shiftTypes.length % PALETTE.length];
+  state.shiftTypes.push({ id: uid(), name, allDay, start, end, paidHours, color });
+  document.getElementById('st-name').value = '';
+  document.getElementById('st-paid').value = '';
+  document.getElementById('st-allday').checked = false;
+  document.getElementById('st-time-row').style.display = 'flex';
+  renderAll();
+  saveState();
+}
+
+function removeShiftType(id){
+  state.shiftTypes = state.shiftTypes.filter(s => s.id !== id);
+  state.pattern = state.pattern.map(p => p === id ? '' : p);
+  renderAll();
+  saveState();
+}
+
+function renderShiftTypeList(){
+  const el = document.getElementById('shift-type-list');
+  el.innerHTML = '';
+  if(state.shiftTypes.length === 0){
+    el.innerHTML = '<p class="empty">No shift types yet — add your first one above.</p>';
+    return;
+  }
+  state.shiftTypes.forEach(s=>{
+    const div = document.createElement('div');
+    div.className = 'chip';
+    div.style.background = s.color;
+    const timeLabel = s.allDay ? 'no fixed time' : `${s.start}–${s.end}`;
+    const paidLabel = s.paidHours ? ` · paid ${s.paidHours}` : '';
+    div.innerHTML = `<span>${escapeHtml(s.name)} · ${timeLabel}${paidLabel}</span>`;
+    const btn = document.createElement('button');
+    btn.textContent = '×';
+    btn.onclick = ()=>removeShiftType(s.id);
+    div.appendChild(btn);
+    el.appendChild(div);
+  });
+}
+
+function renderGrid(){
+  const grid = document.getElementById('pattern-grid');
+  grid.innerHTML = '';
+  grid.className = 'grid';
+  for(let w=0; w<5; w++){
+    const marker = document.createElement('div');
+    marker.className = 'week-marker';
+    marker.textContent = 'Week ' + (w+1);
+    grid.appendChild(marker);
+    DAY_LABELS.forEach(d=>{
+      const lbl = document.createElement('div');
+      lbl.className = 'day-label';
+      lbl.textContent = d;
+      grid.appendChild(lbl);
+    });
+    for(let d=0; d<7; d++){
+      const idx = w*7 + d;
+      const cell = document.createElement('div');
+      cell.className = 'day-cell';
+      const sel = document.createElement('select');
+      sel.dataset.idx = idx;
+      const blankOpt = document.createElement('option');
+      blankOpt.value = '';
+      blankOpt.textContent = '—';
+      sel.appendChild(blankOpt);
+      state.shiftTypes.forEach(s=>{
+        const opt = document.createElement('option');
+        opt.value = s.id;
+        opt.textContent = s.name;
+        sel.appendChild(opt);
+      });
+      sel.value = state.pattern[idx] || '';
+      styleSelect(sel);
+      sel.addEventListener('change', ()=>{
+        state.pattern[idx] = sel.value;
+        styleSelect(sel);
+        renderWeekTotals();
+        saveState();
+      });
+      cell.appendChild(sel);
+      grid.appendChild(cell);
+    }
+  }
+}
+
+function styleSelect(sel){
+  const shift = state.shiftTypes.find(s=>s.id===sel.value);
+  if(shift){
+    sel.style.background = shift.color;
+    sel.style.color = '#1B1E26';
+    sel.style.border = 'none';
+  } else {
+    sel.style.background = 'var(--surface-alt)';
+    sel.style.color = 'var(--text-dim)';
+    sel.style.border = '1px solid var(--border)';
+  }
+}
+
+function patternShiftForDate(dateStr){
+  if(!state.rotaStart) return '';
+  const rotaStart = new Date(state.rotaStart + 'T00:00:00');
+  const d = new Date(dateStr + 'T00:00:00');
+  const diffDays = Math.floor((d - rotaStart) / 86400000);
+  let dayIndex = diffDays % 35;
+  if(dayIndex < 0) dayIndex += 35;
+  return state.pattern[dayIndex] || '';
+}
+
+function effectiveShift(dateStr){
+  if(Object.prototype.hasOwnProperty.call(state.overrides, dateStr)){
+    return state.overrides[dateStr];
+  }
+  return patternShiftForDate(dateStr);
+}
+
+const HOLIDAY = '__holiday__';
+
+function shiftLabel(shiftId){
+  if(shiftId === HOLIDAY) return 'Holiday';
+  if(!shiftId) return 'Day off';
+  const s = state.shiftTypes.find(s=>s.id===shiftId);
+  return s ? s.name : 'Day off';
+}
+
+function populateOverrideShiftSelect(){
+  const sel = document.getElementById('ov-shift');
+  sel.innerHTML = '<option value="">Day off</option><option value="' + HOLIDAY + '">Holiday</option>';
+  state.shiftTypes.forEach(s=>{
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    sel.appendChild(opt);
+  });
+}
+
+function applyOverride(){
+  const date = document.getElementById('ov-date').value;
+  if(!date) return;
+  const shiftId = document.getElementById('ov-shift').value;
+  state.overrides[date] = shiftId;
+  document.getElementById('ov-date').value = '';
+  renderOffList();
+  saveState();
+}
+
+function bookHoliday(){
+  const startVal = document.getElementById('hol-start').value;
+  const endVal = document.getElementById('hol-end').value;
+  const statusEl = document.getElementById('status');
+  if(!startVal || !endVal){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Pick a first day and a last day for the holiday.';
+    return;
+  }
+  const start = new Date(startVal + 'T00:00:00');
+  const end = new Date(endVal + 'T00:00:00');
+  if(end < start){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Last day must be on or after the first day.';
+    return;
+  }
+  const cursor = new Date(start);
+  let count = 0;
+  while(cursor <= end){
+    state.overrides[dateKey(cursor)] = HOLIDAY;
+    count++;
+    cursor.setDate(cursor.getDate()+1);
+  }
+  document.getElementById('hol-start').value = '';
+  document.getElementById('hol-end').value = '';
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = `Booked ${count} day${count===1?'':'s'} of holiday.`;
+  renderOffList();
+  saveState();
+}
+
+function removeOverride(date){
+  delete state.overrides[date];
+  renderOffList();
+  saveState();
+}
+
+function renderOffList(){
+  const el = document.getElementById('off-list');
+  el.innerHTML = '';
+  const dates = Object.keys(state.overrides).sort();
+  if(dates.length===0){
+    el.innerHTML = '<p class="empty">No overrides yet.</p>';
+    return;
+  }
+  dates.forEach(d=>{
+    const div = document.createElement('div');
+    div.className = 'off-item';
+    const dateObj = new Date(d + 'T00:00:00');
+    const formatted = dateObj.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short', year:'numeric'});
+    div.innerHTML = `<span>${formatted} — <strong>${escapeHtml(shiftLabel(state.overrides[d]))}</strong></span>`;
+    const btn = document.createElement('button');
+    btn.textContent = 'Remove';
+    btn.onclick = ()=>removeOverride(d);
+    div.appendChild(btn);
+    el.appendChild(div);
+  });
+}
+
+function parseHM(str){
+  if(!str) return 0;
+  const parts = str.split(':');
+  if(parts.length!==2) return 0;
+  const h = parseInt(parts[0],10)||0;
+  const m = parseInt(parts[1],10)||0;
+  return h + m/60;
+}
+
+function shiftPaidHours(shift){
+  if(shift.paidHours) return parseHM(shift.paidHours);
+  if(shift.allDay || !shift.start || !shift.end) return 0;
+  const [sh,sm] = shift.start.split(':').map(Number);
+  const [eh,em] = shift.end.split(':').map(Number);
+  let startMin = sh*60+sm, endMin = eh*60+em;
+  if(endMin <= startMin) endMin += 24*60;
+  return (endMin-startMin)/60;
+}
+
+function rateForColumn(colIndex){
+  // grid columns are Sun(0)..Sat(6)
+  if(colIndex===0) return state.rates.sunday || 0;
+  if(colIndex===6) return state.rates.saturday || 0;
+  return state.rates.weekday || 0;
+}
+
+function weekPay(weekIndex){
+  let total = 0;
+  for(let d=0; d<7; d++){
+    const shiftId = state.pattern[weekIndex*7 + d];
+    if(!shiftId) continue;
+    const shift = state.shiftTypes.find(s=>s.id===shiftId);
+    if(!shift) continue;
+    total += shiftPaidHours(shift) * rateForColumn(d);
+  }
+  return total;
+}
+
+function renderWeekTotals(){
+  const el = document.getElementById('week-totals');
+  if(!el) return;
+  let html = '';
+  let grand = 0;
+  for(let w=0; w<5; w++){
+    const pay = weekPay(w);
+    grand += pay;
+    html += `<div class="week-total-row"><span>Week ${w+1}</span><strong>£${pay.toFixed(2)}</strong></div>`;
+  }
+  html += `<div class="week-total-row total"><span>5-week total</span><strong>£${grand.toFixed(2)}</strong></div>`;
+  html += `<div class="week-total-row"><span>Average per week</span><strong>£${(grand/5).toFixed(2)}</strong></div>`;
+  el.innerHTML = html;
+}
+
+const PRESET_ROTA = {
+  shiftTypes: [
+    { name:'T101', start:'08:24', end:'19:29', paidHours:'10:35', allDay:false },
+    { name:'T03',  start:'06:54', end:'14:07', paidHours:'06:43', allDay:false },
+    { name:'T02',  start:'05:34', end:'15:07', paidHours:'09:03', allDay:false },
+    { name:'T01',  start:'04:44', end:'13:57', paidHours:'08:43', allDay:false },
+    { name:'T06',  start:'10:23', end:'20:32', paidHours:'09:39', allDay:false },
+    { name:'T08',  start:'15:23', end:'00:27', paidHours:'08:34', allDay:false },
+    { name:'AR',   start:'', end:'', paidHours:'07:48', allDay:true }
+  ],
+  // each row is one rota week, in Sun..Sat order (matches the photo's column order directly).
+  // '' means rest / no shift.
+  patternByName: [
+    ['T101', 'T03', 'T02', 'T03', 'T02', '',    ''   ],
+    ['',     '',    'T03', 'T01', 'T01', 'AR',  'T06'],
+    ['',     'T08', 'T08', 'T08', 'T08', 'T08', ''   ],
+    ['',     'T02', '',    'T02', 'T03', 'T01', 'T01'],
+    ['',     'T01', 'T01', 'T06', '',    'T03', 'T03']
+  ]
+};
+
+function loadPresetRota(){
+  state.shiftTypes = [];
+  const nameToId = {};
+  PRESET_ROTA.shiftTypes.forEach(s=>{
+    const id = uid();
+    nameToId[s.name] = id;
+    state.shiftTypes.push({
+      id, name: s.name, allDay: s.allDay, start: s.start, end: s.end,
+      paidHours: s.paidHours, color: PALETTE[state.shiftTypes.length % PALETTE.length]
+    });
+  });
+  const pattern = [];
+  PRESET_ROTA.patternByName.forEach(week=>{
+    week.forEach(name=>{
+      pattern.push(name ? nameToId[name] : '');
+    });
+  });
+  state.pattern = pattern;
+  renderAll();
+  saveState();
+  const statusEl = document.getElementById('status');
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = 'Loaded your rota from the photo.';
+}
+
+document.getElementById('rota-start').addEventListener('change', (e)=>{
+  state.rotaStart = e.target.value;
+  renderWeekTotals();
+  saveState();
+});
+
+['weekday','saturday','sunday'].forEach(key=>{
+  document.getElementById('rate-' + key).addEventListener('input', (e)=>{
+    state.rates[key] = parseFloat(e.target.value) || 0;
+    renderWeekTotals();
+    saveState();
+  });
+});
+
+document.getElementById('pub-url').addEventListener('input', (e)=>{
+  state.publish.url = e.target.value.trim();
+  saveState();
+});
+document.getElementById('pub-secret').addEventListener('input', (e)=>{
+  state.publish.secret = e.target.value.trim();
+  saveState();
+});
+
+async function publishCalendar(){
+  const statusEl = document.getElementById('publish-status');
+  const linkHolder = document.getElementById('publish-link-holder');
+  let url = (state.publish.url || '').trim();
+  const secret = (state.publish.secret || '').trim();
+  if(!url || !secret){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Enter your Worker URL and secret password first.';
+    return;
+  }
+  url = url.replace(/\/+$/, ''); // strip trailing slash
+  statusEl.style.color = 'var(--text-dim)';
+  statusEl.textContent = 'Publishing…';
+  try{
+    const res = await fetch(url + '/api/state', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Token': secret
+      },
+      body: JSON.stringify(state)
+    });
+    if(!res.ok){
+      throw new Error('Server responded with ' + res.status);
+    }
+    statusEl.style.color = 'var(--teal)';
+    statusEl.textContent = 'Published! Your live calendar link is ready.';
+    linkHolder.innerHTML = 'Share this link: <strong>' + escapeHtml(url + '/calendar.ics') + '</strong>';
+  }catch(e){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Could not publish — check the URL and secret are correct, and that you have a connection.';
+  }
+}
+
+function escapeHtml(str){
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+function renderAll(){
+  renderShiftTypeList();
+  renderGrid();
+  renderOffList();
+  populateOverrideShiftSelect();
+  renderWeekTotals();
+}
+
+function pad(n){ return n.toString().padStart(2,'0'); }
+
+function dateToICSDate(d){
+  return d.getFullYear() + pad(d.getMonth()+1) + pad(d.getDate());
+}
+function dateToICSDateTime(d, hh, mm){
+  return dateToICSDate(d) + 'T' + pad(hh) + pad(mm) + '00';
+}
+function dateKey(d){
+  return d.getFullYear() + '-' + pad(d.getMonth()+1) + '-' + pad(d.getDate());
+}
+
+function generateICS(months){
+  if(!state.rotaStart || state.shiftTypes.length===0){
+    return null;
+  }
+  const today = new Date();
+  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const end = new Date(start);
+  end.setMonth(end.getMonth() + months);
+
+  let lines = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Shift Rota App//EN',
+    'CALSCALE:GREGORIAN',
+    'BEGIN:VTIMEZONE',
+    'TZID:Europe/London',
+    'BEGIN:DAYLIGHT',
+    'TZOFFSETFROM:+0000',
+    'TZOFFSETTO:+0100',
+    'TZNAME:BST',
+    'DTSTART:19700329T010000',
+    'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=3',
+    'END:DAYLIGHT',
+    'BEGIN:STANDARD',
+    'TZOFFSETFROM:+0100',
+    'TZOFFSETTO:+0000',
+    'TZNAME:GMT',
+    'DTSTART:19701025T020000',
+    'RRULE:FREQ=YEARLY;BYDAY=-1SU;BYMONTH=10',
+    'END:STANDARD',
+    'END:VTIMEZONE'
+  ];
+
+  let count = 0;
+  const cursor = new Date(start);
+
+  while(cursor <= end){
+    const key = dateKey(cursor);
+    const shiftId = effectiveShift(key);
+    if(shiftId === HOLIDAY){
+      const stamp = dateToICSDateTime(new Date(), new Date().getHours(), new Date().getMinutes());
+      const next = new Date(cursor);
+      next.setDate(next.getDate()+1);
+      lines.push('BEGIN:VEVENT');
+      lines.push('UID:' + key + '-holiday@shift-rota-app');
+      lines.push('DTSTAMP:' + stamp + 'Z');
+      lines.push('DTSTART;VALUE=DATE:' + dateToICSDate(cursor));
+      lines.push('DTEND;VALUE=DATE:' + dateToICSDate(next));
+      lines.push('SUMMARY:Holiday');
+      lines.push('END:VEVENT');
+      count++;
+      cursor.setDate(cursor.getDate()+1);
+      continue;
+    }
+    const shift = state.shiftTypes.find(s=>s.id===shiftId);
+    if(shift){
+      const stamp = dateToICSDateTime(new Date(), new Date().getHours(), new Date().getMinutes());
+      lines.push('BEGIN:VEVENT');
+      lines.push('UID:' + key + '-' + shift.id + '@shift-rota-app');
+      lines.push('DTSTAMP:' + stamp + 'Z');
+      if(shift.allDay){
+        const next = new Date(cursor);
+        next.setDate(next.getDate()+1);
+        lines.push('DTSTART;VALUE=DATE:' + dateToICSDate(cursor));
+        lines.push('DTEND;VALUE=DATE:' + dateToICSDate(next));
+      } else {
+        const [sh, sm] = shift.start.split(':').map(Number);
+        const [eh, em] = shift.end.split(':').map(Number);
+        const dtStart = new Date(cursor); dtStart.setHours(sh, sm, 0, 0);
+        const dtEnd = new Date(cursor); dtEnd.setHours(eh, em, 0, 0);
+        if(dtEnd <= dtStart){ dtEnd.setDate(dtEnd.getDate()+1); }
+        lines.push('DTSTART;TZID=Europe/London:' + dateToICSDateTime(dtStart, dtStart.getHours(), dtStart.getMinutes()));
+        lines.push('DTEND;TZID=Europe/London:' + dateToICSDateTime(dtEnd, dtEnd.getHours(), dtEnd.getMinutes()));
+      }
+      lines.push('SUMMARY:' + shift.name.replace(/,/g,'\\,'));
+      lines.push('END:VEVENT');
+      count++;
+    }
+    cursor.setDate(cursor.getDate()+1);
+  }
+
+  lines.push('END:VCALENDAR');
+  return { ics: lines.join('\r\n'), count };
+}
+
+function downloadICS(){
+  const months = parseInt(document.getElementById('range-select').value, 10);
+  const result = generateICS(months);
+  const statusEl = document.getElementById('status');
+  if(!result){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Add at least one shift type and a rota start date first.';
+    return;
+  }
+  shareOrDownload(result.ics, 'shift-rota.ics', 'text/calendar').then(outcome=>{
+    statusEl.style.color = 'var(--teal)';
+    if(outcome === 'shared'){
+      statusEl.textContent = `Done — ${result.count} shifts exported. Saved or sent via the share sheet.`;
+    } else if(outcome === 'cancelled'){
+      statusEl.textContent = 'Export cancelled.';
+      statusEl.style.color = 'var(--text-dim)';
+    } else {
+      statusEl.textContent = `Done — ${result.count} shifts exported. Check your downloads.`;
+    }
+  });
+  showManualCopyFallback('ics-fallback', result.ics, 'shift-rota.ics');
+}
+
+function exportBackup(){
+  const statusEl = document.getElementById('backup-status');
+  try{
+    shareOrDownload(JSON.stringify(state, null, 2), 'shift-rota-backup.json', 'application/json').then(outcome=>{
+      if(outcome === 'shared'){
+        statusEl.style.color = 'var(--teal)';
+        statusEl.textContent = 'Backup saved or sent via the share sheet.';
+      } else if(outcome === 'cancelled'){
+        statusEl.style.color = 'var(--text-dim)';
+        statusEl.textContent = 'Backup cancelled.';
+      } else {
+        statusEl.style.color = 'var(--teal)';
+        statusEl.textContent = 'Backup saved to your downloads.';
+      }
+    });
+    showManualCopyFallback('backup-fallback', JSON.stringify(state, null, 2), 'shift-rota-backup.json');
+  }catch(e){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Could not create backup file.';
+  }
+}
+
+function importBackup(event){
+  const statusEl = document.getElementById('backup-status');
+  const file = event.target.files && event.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e){
+    try{
+      const parsed = JSON.parse(e.target.result);
+      if(!parsed || !Array.isArray(parsed.shiftTypes) || !Array.isArray(parsed.pattern)){
+        throw new Error('Not a valid backup');
+      }
+      state = Object.assign({
+        shiftTypes:[], pattern:Array(35).fill(''), rotaStart:'', overrides:{}, rates:{weekday:0,saturday:0,sunday:0}, publish:{url:'',secret:''}
+      }, parsed);
+      if(!state.overrides) state.overrides = {};
+      if(!state.rates) state.rates = {weekday:0,saturday:0,sunday:0};
+      if(!state.publish) state.publish = {url:'',secret:''};
+      const maxId = state.shiftTypes.reduce((m,s)=>{
+        const n = parseInt((s.id||'s0').slice(1),10);
+        return isNaN(n) ? m : Math.max(m,n);
+      },0);
+      nextId = maxId + 1;
+      document.getElementById('rota-start').value = state.rotaStart || '';
+      document.getElementById('rate-weekday').value = state.rates.weekday || '';
+      document.getElementById('rate-saturday').value = state.rates.saturday || '';
+      document.getElementById('rate-sunday').value = state.rates.sunday || '';
+      document.getElementById('pub-url').value = state.publish.url || '';
+      document.getElementById('pub-secret').value = state.publish.secret || '';
+      renderAll();
+      saveState();
+      statusEl.style.color = 'var(--teal)';
+      statusEl.textContent = 'Backup restored.';
+    }catch(err){
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = 'That file could not be read as a backup.';
+    }
+  };
+  reader.readAsText(file);
+  event.target.value = '';
+}
+
+async function shareOrDownload(content, filename, mime){
+  const blob = new Blob([content], {type: mime});
+  try{
+    const file = new File([blob], filename, {type: mime});
+    if(navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file], title: filename});
+      return 'shared';
+    }
+  }catch(e){
+    if(e && e.name === 'AbortError') return 'cancelled';
+    // fall through to anchor download
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return 'downloaded';
+}
+
+function showManualCopyFallback(containerId, content, filename){
+  const container = document.getElementById(containerId);
+  if(!container) return;
+  container.innerHTML = '';
+  const label = document.createElement('p');
+  label.className = 'help';
+  label.style.marginTop = '10px';
+  label.textContent = 'Nothing downloading? Tap "Copy text" below, paste into Notes, save it, then in the Files app rename it to "' + filename + '".';
+  const ta = document.createElement('textarea');
+  ta.value = content;
+  ta.readOnly = true;
+  ta.style.width = '100%';
+  ta.style.height = '90px';
+  ta.style.fontFamily = 'monospace';
+  ta.style.fontSize = '11px';
+  ta.style.background = 'var(--surface-alt)';
+  ta.style.color = 'var(--text)';
+  ta.style.border = '1px solid var(--border)';
+  ta.style.borderRadius = '7px';
+  ta.style.padding = '8px';
+  ta.style.boxSizing = 'border-box';
+  ta.style.marginTop = '8px';
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'btn secondary full';
+  copyBtn.style.marginTop = '8px';
+  copyBtn.textContent = 'Copy text';
+  copyBtn.onclick = function(){
+    ta.focus();
+    ta.select();
+    let copied = false;
+    try{ copied = document.execCommand('copy'); }catch(e){}
+    if(!copied && navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(content).catch(()=>{});
+    }
+    copyBtn.textContent = 'Copied';
+    setTimeout(()=>{ copyBtn.textContent = 'Copy text'; }, 2000);
+  };
+  container.appendChild(label);
+  container.appendChild(ta);
+  container.appendChild(copyBtn);
+}
+
+async function loadFromLive(){
+  const statusEl = document.getElementById('publish-status');
+  let url = (state.publish.url || '').trim();
+  const secret = (state.publish.secret || '').trim();
+  if(!url || !secret){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Enter your Worker URL and secret password first.';
+    return;
+  }
+  url = url.replace(/\/+$/, '');
+  statusEl.style.color = 'var(--text-dim)';
+  statusEl.textContent = 'Loading…';
+  try{
+    const res = await fetch(url + '/api/state', {
+      method: 'GET',
+      headers: { 'X-Auth-Token': secret }
+    });
+    if(res.status === 404){
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = 'Nothing has been published yet from any device.';
+      return;
+    }
+    if(!res.ok){
+      throw new Error('Server responded with ' + res.status);
+    }
+    const parsed = await res.json();
+    if(!parsed || !Array.isArray(parsed.shiftTypes) || !Array.isArray(parsed.pattern)){
+      throw new Error('Unexpected data shape');
+    }
+    const keepPublish = state.publish;
+    state = Object.assign({
+      shiftTypes:[], pattern:Array(35).fill(''), rotaStart:'', overrides:{}, rates:{weekday:0,saturday:0,sunday:0}, publish:{url:'',secret:''}
+    }, parsed);
+    state.publish = keepPublish; // don't let the loaded copy wipe out the URL/secret you just typed
+    if(!state.overrides) state.overrides = {};
+    if(!state.rates) state.rates = {weekday:0,saturday:0,sunday:0};
+    const maxId = state.shiftTypes.reduce((m,s)=>{
+      const n = parseInt((s.id||'s0').slice(1),10);
+      return isNaN(n) ? m : Math.max(m,n);
+    },0);
+    nextId = maxId + 1;
+    document.getElementById('rota-start').value = state.rotaStart || '';
+    document.getElementById('rate-weekday').value = state.rates.weekday || '';
+    document.getElementById('rate-saturday').value = state.rates.saturday || '';
+    document.getElementById('rate-sunday').value = state.rates.sunday || '';
+    renderAll();
+    saveState();
+    statusEl.style.color = 'var(--teal)';
+    statusEl.textContent = 'Loaded the latest published version onto this device.';
+  }catch(e){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Could not load — check the URL and secret are correct.';
+  }
+}
+
+loadState();
+</script>
+</body>
+</html>
