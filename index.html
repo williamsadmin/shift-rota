@@ -27,6 +27,18 @@
     padding:9px 10px;font-size:14px;font-family:inherit;width:100%;
   }
   input[type=color]{width:48px;height:38px;padding:2px;border-radius:7px;border:1px solid var(--border);background:var(--surface-alt);}
+  textarea{
+    background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:7px;
+    padding:9px 10px;font-size:13px;font-family:'SF Mono',Consolas,monospace;width:100%;resize:vertical;min-height:140px;
+  }
+  textarea:focus{outline:2px solid var(--amber);outline-offset:1px;}
+  .recent-colors{display:flex;gap:6px;margin:4px 0 10px;flex-wrap:wrap;}
+  .recent-colors button{
+    width:26px;height:26px;border-radius:6px;border:2px solid var(--border);cursor:pointer;padding:0;
+  }
+  .recent-colors button.add-new{
+    background:var(--surface-alt);color:var(--text-dim);font-size:14px;display:flex;align-items:center;justify-content:center;
+  }
   input:focus, select:focus{outline:2px solid var(--amber);outline-offset:1px;}
   .row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
   .row > div{flex:1;min-width:90px;}
@@ -158,8 +170,10 @@
         <p class="help" style="margin-top:0;margin-bottom:12px;">Only your account can do this — everyone else just browses and adds.</p>
         <div class="row">
           <div><label>Name</label><input type="text" id="tpl-name" placeholder="e.g. T01"></div>
-          <div style="flex:0 0 60px;"><label>Colour</label><input type="color" id="tpl-color" value="#43C6AC"></div>
         </div>
+        <label>Colour</label>
+        <div class="recent-colors" id="tpl-recent-colors"></div>
+        <input type="color" id="tpl-color" value="#43C6AC" style="margin-bottom:10px;">
         <div class="checkbox-row">
           <input type="checkbox" id="tpl-allday">
           <label for="tpl-allday">No fixed time (all-day / flexible)</label>
@@ -172,7 +186,11 @@
           <div><label>Paid hours (HH:MM)</label><input type="text" id="tpl-paid" placeholder="e.g. 08:43"></div>
         </div>
         <div class="row">
-          <div><label>Default description</label><input type="text" id="tpl-desc" placeholder="optional"></div>
+          <div>
+            <label>Description (e.g. the duty board — one line per leg)</label>
+            <textarea id="tpl-desc" placeholder="0444–0610  Sign on & depot run · Matlock Garage → Matlock, Bakewell Road
+...time range · what it is · from → to"></textarea>
+          </div>
         </div>
         <button class="btn full" onclick="createTemplate()">Create template</button>
         <div class="status" id="tpl-create-status"></div>
@@ -195,8 +213,10 @@
         <p class="sec-title">1 · Your shift types</p>
         <div class="row">
           <div><label>Name</label><input type="text" id="st-name" placeholder="e.g. Early, Late, Night"></div>
-          <div style="flex:0 0 60px;"><label>Colour</label><input type="color" id="st-color" value="#F2A93B"></div>
         </div>
+        <label>Colour</label>
+        <div class="recent-colors" id="st-recent-colors"></div>
+        <input type="color" id="st-color" value="#F2A93B" style="margin-bottom:10px;">
         <div class="checkbox-row">
           <input type="checkbox" id="st-allday">
           <label for="st-allday">No fixed time (all-day / flexible)</label>
@@ -209,7 +229,12 @@
           <div><label>Paid hours (HH:MM)</label><input type="text" id="st-paid" placeholder="e.g. 08:43"></div>
         </div>
         <div class="row">
-          <div><label>Default description (shown in calendar exports)</label><input type="text" id="st-desc" placeholder="optional, e.g. Route 42"></div>
+          <div>
+            <label>Description (shown in calendar exports — e.g. your duty board)</label>
+            <textarea id="st-desc" placeholder="0444–0610  Sign on & depot run · Matlock Garage → Matlock, Bakewell Road
+0610–0628  Service 6.1 (Jny 100610) · Matlock, Bakewell Road → Bakewell, Matlock Street
+...one line per leg: time range · what it is · from → to"></textarea>
+          </div>
         </div>
         <button class="btn full" onclick="addShiftType()">Add shift type</button>
         <div class="status" id="st-status"></div>
@@ -296,6 +321,37 @@ let holidays = []; // override rows where value === '__holiday__'
 let payRates = { enabled:false, sun:0, mon:0, tue:0, wed:0, thu:0, fri:0, sat:0 };
 let isAdmin = false;
 let isSignup = false;
+let recentColors = [];
+
+function loadRecentColors(){
+  try{
+    const raw = localStorage.getItem('recentShiftColors');
+    recentColors = raw ? JSON.parse(raw) : [];
+  }catch(e){
+    recentColors = [];
+  }
+}
+
+function rememberColor(color){
+  recentColors = [color, ...recentColors.filter(c => c.toLowerCase() !== color.toLowerCase())].slice(0, 8);
+  try{ localStorage.setItem('recentShiftColors', JSON.stringify(recentColors)); }catch(e){}
+  renderRecentColors();
+}
+
+function renderRecentColors(){
+  [['st-recent-colors','st-color'], ['tpl-recent-colors','tpl-color']].forEach(([listId, inputId])=>{
+    const el = document.getElementById(listId);
+    if(!el) return;
+    el.innerHTML = '';
+    recentColors.forEach(color=>{
+      const btn = document.createElement('button');
+      btn.style.background = color;
+      btn.title = color;
+      btn.onclick = ()=>{ document.getElementById(inputId).value = color; };
+      el.appendChild(btn);
+    });
+  });
+}
 
 // ---------- AUTH ----------
 function toggleAuthMode(){
@@ -451,6 +507,7 @@ async function addShiftType(){
     return;
   }
   shiftTypes.push(data);
+  rememberColor(color);
   document.getElementById('st-name').value = '';
   document.getElementById('st-paid').value = '';
   document.getElementById('st-desc').value = '';
@@ -559,6 +616,7 @@ async function createTemplate(){
     return;
   }
   templates.push(data);
+  rememberColor(color);
   document.getElementById('tpl-name').value = '';
   document.getElementById('tpl-paid').value = '';
   document.getElementById('tpl-desc').value = '';
@@ -915,6 +973,8 @@ function escapeHtml(str){
   return div.innerHTML;
 }
 
+loadRecentColors();
+renderRecentColors();
 checkExistingSession();
 </script>
 </body>
