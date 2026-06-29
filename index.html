@@ -39,6 +39,19 @@
   .recent-colors button.add-new{
     background:var(--surface-alt);color:var(--text-dim);font-size:14px;display:flex;align-items:center;justify-content:center;
   }
+  .leg-row{display:flex;gap:6px;margin-bottom:8px;align-items:flex-start;flex-wrap:wrap;}
+  .leg-row input[type=time]{flex:0 0 90px;}
+  .leg-row input.leg-route{flex:0 0 110px;}
+  .leg-row input.leg-notes{flex:1 1 160px;min-width:140px;}
+  .leg-row button.leg-remove{
+    flex:0 0 30px;height:38px;background:var(--surface-alt);border:1px solid var(--border);color:var(--danger);
+    border-radius:7px;cursor:pointer;font-size:14px;
+  }
+  .leg-summary{
+    background:var(--surface-alt);border:1px solid var(--border);border-radius:7px;padding:10px;
+    font-family:'SF Mono',Consolas,monospace;font-size:12px;white-space:pre-wrap;color:var(--text-dim);margin-top:10px;
+  }
+  .leg-summary .gap-line{color:var(--amber);}
   input:focus, select:focus{outline:2px solid var(--amber);outline-offset:1px;}
   .row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
   .row > div{flex:1;min-width:90px;}
@@ -187,9 +200,11 @@
         </div>
         <div class="row">
           <div>
-            <label>Description (e.g. the duty board — one line per leg)</label>
-            <textarea id="tpl-desc" placeholder="0444–0610  Sign on & depot run · Matlock Garage → Matlock, Bakewell Road
-...time range · what it is · from → to"></textarea>
+            <label>Duty board (optional) — add each leg, then it's totalled and formatted automatically</label>
+            <div id="tpl-legs"></div>
+            <button class="btn secondary" type="button" onclick="addLegRow('tpl')">+ Add leg</button>
+            <div class="leg-summary" id="tpl-leg-summary">No legs added yet.</div>
+            <textarea id="tpl-desc" style="display:none;"></textarea>
           </div>
         </div>
         <button class="btn full" onclick="createTemplate()">Create template</button>
@@ -230,10 +245,11 @@
         </div>
         <div class="row">
           <div>
-            <label>Description (shown in calendar exports — e.g. your duty board)</label>
-            <textarea id="st-desc" placeholder="0444–0610  Sign on & depot run · Matlock Garage → Matlock, Bakewell Road
-0610–0628  Service 6.1 (Jny 100610) · Matlock, Bakewell Road → Bakewell, Matlock Street
-...one line per leg: time range · what it is · from → to"></textarea>
+            <label>Duty board (optional) — add each leg, then it's totalled and formatted automatically</label>
+            <div id="st-legs"></div>
+            <button class="btn secondary" type="button" onclick="addLegRow('st')">+ Add leg</button>
+            <div class="leg-summary" id="st-leg-summary">No legs added yet.</div>
+            <textarea id="st-desc" style="display:none;"></textarea>
           </div>
         </div>
         <button class="btn full" onclick="addShiftType()">Add shift type</button>
@@ -322,6 +338,120 @@ let payRates = { enabled:false, sun:0, mon:0, tue:0, wed:0, thu:0, fri:0, sat:0 
 let isAdmin = false;
 let isSignup = false;
 let recentColors = [];
+let legBuilders = { st: [], tpl: [] };
+
+function addLegRow(prefix){
+  legBuilders[prefix].push({ start:'', end:'', route:'', notes:'' });
+  renderLegRows(prefix);
+}
+
+function removeLegRow(prefix, idx){
+  legBuilders[prefix].splice(idx, 1);
+  renderLegRows(prefix);
+}
+
+function renderLegRows(prefix){
+  const container = document.getElementById(prefix + '-legs');
+  container.innerHTML = '';
+  legBuilders[prefix].forEach((leg, idx)=>{
+    const row = document.createElement('div');
+    row.className = 'leg-row';
+
+    const startInput = document.createElement('input');
+    startInput.type = 'time'; startInput.value = leg.start;
+    startInput.oninput = ()=>{ leg.start = startInput.value; compileDutyBoard(prefix); };
+
+    const endInput = document.createElement('input');
+    endInput.type = 'time'; endInput.value = leg.end;
+    endInput.oninput = ()=>{ leg.end = endInput.value; compileDutyBoard(prefix); };
+
+    const routeInput = document.createElement('input');
+    routeInput.type = 'text'; routeInput.className = 'leg-route'; routeInput.placeholder = 'Route/service';
+    routeInput.value = leg.route;
+    routeInput.oninput = ()=>{ leg.route = routeInput.value; compileDutyBoard(prefix); };
+
+    const notesInput = document.createElement('input');
+    notesInput.type = 'text'; notesInput.className = 'leg-notes'; notesInput.placeholder = 'From → To / notes';
+    notesInput.value = leg.notes;
+    notesInput.oninput = ()=>{ leg.notes = notesInput.value; compileDutyBoard(prefix); };
+
+    const removeBtn = document.createElement('button');
+    removeBtn.className = 'leg-remove'; removeBtn.textContent = '×'; removeBtn.type = 'button';
+    removeBtn.onclick = ()=>removeLegRow(prefix, idx);
+
+    row.appendChild(startInput);
+    row.appendChild(endInput);
+    row.appendChild(routeInput);
+    row.appendChild(notesInput);
+    row.appendChild(removeBtn);
+    container.appendChild(row);
+  });
+  compileDutyBoard(prefix);
+}
+
+function timeToMin(t){
+  const parts = t.split(':');
+  return parseInt(parts[0],10)*60 + parseInt(parts[1],10);
+}
+
+function formatClock(absMin){
+  const m = ((absMin % 1440) + 1440) % 1440;
+  return String(Math.floor(m/60)).padStart(2,'0') + ':' + String(m%60).padStart(2,'0');
+}
+
+function formatDuration(mins){
+  const h = Math.floor(mins/60), m = Math.round(mins%60);
+  return h + ':' + String(m).padStart(2,'0');
+}
+
+function compileDutyBoard(prefix){
+  const legs = legBuilders[prefix].filter(l => l.start && l.end);
+  const summaryEl = document.getElementById(prefix + '-leg-summary');
+  const hiddenEl = document.getElementById(prefix + '-desc');
+  if(legs.length === 0){
+    summaryEl.textContent = 'No legs added yet.';
+    hiddenEl.value = '';
+    return;
+  }
+
+  // Build an absolute timeline so we can detect overnight wraps and gaps correctly.
+  let prevAbs = null;
+  const timed = legs.map(leg=>{
+    let startAbs = timeToMin(leg.start);
+    if(prevAbs !== null && startAbs < prevAbs) startAbs += 1440;
+    let endAbs = timeToMin(leg.end);
+    if(endAbs < startAbs) endAbs += 1440;
+    prevAbs = endAbs;
+    return { ...leg, startAbs, endAbs };
+  });
+
+  let lines = [];
+  let totalLegMinutes = 0;
+  for(let i=0; i<timed.length; i++){
+    const leg = timed[i];
+    totalLegMinutes += (leg.endAbs - leg.startAbs);
+    const label = [leg.route, leg.notes].filter(Boolean).join(' · ');
+    lines.push(formatClock(leg.startAbs) + '–' + formatClock(leg.endAbs) + (label ? '  ' + label : ''));
+
+    if(i < timed.length - 1){
+      const gap = timed[i+1].startAbs - leg.endAbs;
+      if(gap > 0){
+        lines.push(formatClock(leg.endAbs) + '–' + formatClock(timed[i+1].startAbs) + '  Gap (' + formatDuration(gap) + ')');
+      }
+    }
+  }
+
+  const span = timed[timed.length-1].endAbs - timed[0].startAbs;
+  lines.push('');
+  lines.push('Total leg time: ' + formatDuration(totalLegMinutes));
+  lines.push('Total span (first start to last end): ' + formatDuration(span));
+
+  const compiled = lines.join('\n');
+  hiddenEl.value = compiled;
+
+  // Re-render summary with gap lines highlighted
+  summaryEl.innerHTML = lines.map(l => l.includes('Gap (') ? '<span class="gap-line">' + escapeHtml(l) + '</span>' : escapeHtml(l)).join('\n');
+}
 
 function loadRecentColors(){
   try{
@@ -510,7 +640,8 @@ async function addShiftType(){
   rememberColor(color);
   document.getElementById('st-name').value = '';
   document.getElementById('st-paid').value = '';
-  document.getElementById('st-desc').value = '';
+  legBuilders.st = [];
+  renderLegRows('st');
   document.getElementById('st-allday').checked = false;
   document.getElementById('st-time-row').style.display = 'flex';
   statusEl.style.color = 'var(--teal)';
@@ -619,7 +750,8 @@ async function createTemplate(){
   rememberColor(color);
   document.getElementById('tpl-name').value = '';
   document.getElementById('tpl-paid').value = '';
-  document.getElementById('tpl-desc').value = '';
+  legBuilders.tpl = [];
+  renderLegRows('tpl');
   document.getElementById('tpl-allday').checked = false;
   document.getElementById('tpl-time-row').style.display = 'flex';
   statusEl.style.color = 'var(--teal)';
@@ -975,6 +1107,8 @@ function escapeHtml(str){
 
 loadRecentColors();
 renderRecentColors();
+renderLegRows('st');
+renderLegRows('tpl');
 checkExistingSession();
 </script>
 </body>
