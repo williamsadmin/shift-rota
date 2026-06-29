@@ -1445,7 +1445,7 @@ function renderCalendarTab(){
   const end = getCalendarEndDate(today);
 
   listEl.style.display = viewMode === 'list' ? 'block' : 'none';
-  gridEl.style.display = viewMode === 'grid' ? 'block' : 'none';
+  gridEl.style.display = viewMode === 'grid' ? '' : 'none';
   listEl.innerHTML = '';
   gridEl.innerHTML = '';
   gridEl.className = viewMode === 'grid' ? 'grid' : '';
