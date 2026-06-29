@@ -141,8 +141,52 @@
   </div>
 
   <div class="wrap">
-    <div class="tab-panel" id="tab-calendar">
-      <div class="coming-soon"><span class="eyebrow">Coming soon</span>My Calendar — your live view with holidays, swaps and bank holidays highlighted.</div>
+    <div class="tab-panel active" id="tab-calendar">
+      <header style="margin-bottom:16px;">
+        <p class="eyebrow">My Calendar</p>
+        <h1>Live view</h1>
+        <p class="sub">Your original pattern with holidays and swaps already applied. UK bank holidays are marked.</p>
+      </header>
+
+      <section id="tentative-banner" style="display:none;">
+        <p class="sec-title" style="color:var(--amber);">Needs confirming with your workplace</p>
+        <div id="tentative-list"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Swap a shift</p>
+        <p class="help" style="margin-top:0;">Move a shift from one of your dates to another. (Swapping with a friend will be added once the Friends tab is built.)</p>
+        <div class="row">
+          <div><label>From date</label><input type="date" id="swap-from"></div>
+          <div><label>To date</label><input type="date" id="swap-to"></div>
+        </div>
+        <button class="btn secondary full" onclick="initiateSelfSwap()">Swap these shifts</button>
+        <div id="swap-confirm-box" style="display:none;margin-top:12px;">
+          <p class="help" style="margin-top:0;font-weight:600;color:var(--text);">Do you need to inform your workplace of this swap?</p>
+          <div class="row">
+            <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('no')">No</button>
+            <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('already')">Already done</button>
+            <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('need_to')">I need to</button>
+          </div>
+        </div>
+        <div class="status" id="swap-status"></div>
+      </section>
+
+      <section>
+        <div class="row">
+          <div style="max-width:200px;">
+            <label>Show next</label>
+            <select id="calendar-range" onchange="renderCalendarTab()">
+              <option value="1">1 month</option>
+              <option value="3" selected>3 months</option>
+              <option value="6">6 months</option>
+              <option value="12">12 months</option>
+            </select>
+          </div>
+        </div>
+        <div id="calendar-income" style="margin-bottom:14px;"></div>
+        <div id="calendar-list"></div>
+      </section>
     </div>
     <div class="tab-panel" id="tab-original">
       <header style="margin-bottom:16px;">
@@ -183,6 +227,7 @@
         <p class="help" style="margin-top:0;margin-bottom:12px;">Only your account can do this — everyone else just browses and adds.</p>
         <div class="row">
           <div><label>Name</label><input type="text" id="tpl-name" placeholder="e.g. T01"></div>
+          <div><label>Category (depot/location)</label><input type="text" id="tpl-category" placeholder="e.g. Matlock, Belper"></div>
         </div>
         <label>Colour</label>
         <div class="recent-colors" id="tpl-recent-colors"></div>
@@ -214,11 +259,19 @@
 
       <section>
         <p class="sec-title">Available templates</p>
+        <div class="row">
+          <div style="max-width:220px;">
+            <label>Filter by category</label>
+            <select id="tpl-filter" onchange="renderTemplatesBrowseList()">
+              <option value="">All categories</option>
+            </select>
+          </div>
+        </div>
         <div id="templates-browse-list"></div>
       </section>
     </div>
 
-    <div class="tab-panel active" id="tab-account">
+    <div class="tab-panel" id="tab-account">
       <header style="margin-bottom:16px;">
         <p class="eyebrow">Account &amp; Setup</p>
         <h1>Your original rota</h1>
@@ -335,6 +388,21 @@ let holidays = []; // override rows where value === '__holiday__'
 let payRates = { enabled:false, sun:0, mon:0, tue:0, wed:0, thu:0, fri:0, sat:0 };
 let isAdmin = false;
 let isSignup = false;
+let allOverrides = []; // every override row for the current user, not just holidays
+let bankHolidays = new Set();
+let pendingSwap = null; // { fromDate, toDate, fromValue, toValue }
+
+async function loadBankHolidays(){
+  try{
+    const res = await fetch('https://www.gov.uk/bank-holidays.json');
+    const data = await res.json();
+    const events = (data['england-and-wales'] && data['england-and-wales'].events) || [];
+    bankHolidays = new Set(events.map(e => e.date));
+  }catch(e){
+    bankHolidays = new Set(); // if this fails (offline, blocked, etc.) the calendar still works, just without highlighting
+  }
+  if(currentUser) renderCalendarTab();
+}
 let recentColors = [];
 let legBuilders = { st: [], tpl: [] };
 let editingItem = { st: null, tpl: null };
@@ -568,17 +636,18 @@ document.getElementById('st-allday').addEventListener('change', (e)=>{
 });
 
 async function loadAccountData(){
-  const [stRes, tplRes, rotaRes, holRes, payRes, profileRes] = await Promise.all([
+  const [stRes, tplRes, rotaRes, ovRes, payRes, profileRes] = await Promise.all([
     sb.from('shift_types').select('*').eq('owner_id', currentUser.id),
     sb.from('shift_types').select('*').eq('is_template', true),
     sb.from('rota_settings').select('*').eq('user_id', currentUser.id).maybeSingle(),
-    sb.from('overrides').select('*').eq('user_id', currentUser.id).eq('value', '__holiday__').order('override_date'),
+    sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date'),
     sb.from('pay_rates').select('*').eq('user_id', currentUser.id).maybeSingle(),
     sb.from('profiles').select('is_admin').eq('id', currentUser.id).maybeSingle()
   ]);
   shiftTypes = stRes.data || [];
   templates = tplRes.data || [];
-  holidays = holRes.data || [];
+  allOverrides = ovRes.data || [];
+  holidays = allOverrides.filter(o => o.value === '__holiday__');
   isAdmin = (profileRes.data && profileRes.data.is_admin) || false;
   document.getElementById('template-create-section').style.display = isAdmin ? 'block' : 'none';
   const tplSub = document.getElementById('templates-sub');
@@ -620,6 +689,7 @@ async function loadAccountData(){
   renderGrid();
   renderOriginalGrid();
   renderHolidayList();
+  renderCalendarTab();
 }
 
 async function addShiftType(){
@@ -760,6 +830,7 @@ function startEditTemplate(t){
   document.getElementById('tpl-start').value = t.start_time || '09:00';
   document.getElementById('tpl-end').value = t.end_time || '17:00';
   document.getElementById('tpl-paid').value = t.paid_hours || '';
+  document.getElementById('tpl-category').value = t.category || '';
   legBuilders.tpl = (t.legs_data && Array.isArray(t.legs_data)) ? JSON.parse(JSON.stringify(t.legs_data)) : [];
   renderLegRows('tpl');
   document.getElementById('tpl-submit-btn').textContent = 'Save changes';
@@ -771,6 +842,7 @@ function cancelEdit(prefix){
   editingItem[prefix] = null;
   document.getElementById(prefix + '-name').value = '';
   document.getElementById(prefix + '-paid').value = '';
+  if(prefix === 'tpl') document.getElementById('tpl-category').value = '';
   document.getElementById(prefix + '-allday').checked = false;
   document.getElementById(prefix + '-time-row').style.display = 'flex';
   legBuilders[prefix] = [];
@@ -783,16 +855,30 @@ function renderTemplatesBrowseList(){
   const el = document.getElementById('templates-browse-list');
   if(!el) return;
   el.innerHTML = '';
-  if(templates.length === 0){
-    el.innerHTML = '<p class="empty">No templates yet' + (isAdmin ? ' — create your first one above.' : ' — check back later.') + '</p>';
+
+  const filterSelect = document.getElementById('tpl-filter');
+  const categories = [...new Set(templates.map(t => t.category).filter(Boolean))].sort();
+  const currentFilter = filterSelect.value;
+  filterSelect.innerHTML = '<option value="">All categories</option>' +
+    categories.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
+  filterSelect.value = categories.includes(currentFilter) ? currentFilter : '';
+
+  const activeFilter = filterSelect.value;
+  const visible = activeFilter ? templates.filter(t => t.category === activeFilter) : templates;
+
+  if(visible.length === 0){
+    el.innerHTML = '<p class="empty">' + (templates.length === 0
+      ? ('No templates yet' + (isAdmin ? ' — create your first one above.' : ' — check back later.'))
+      : 'No templates in this category.') + '</p>';
     return;
   }
-  templates.forEach(t=>{
+  visible.forEach(t=>{
     const div = document.createElement('div');
     div.className = 'off-item';
     const timeLabel = t.all_day ? 'no fixed time' : (t.start_time + '–' + t.end_time);
     const swatch = '<span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:' + (t.color || '#43C6AC') + ';margin-right:8px;"></span>';
-    div.innerHTML = '<span>' + swatch + escapeHtml(t.name) + ' · ' + timeLabel + (t.paid_hours ? ' · paid ' + t.paid_hours : '') + '</span>';
+    const catBadge = t.category ? ' <span style="color:var(--amber);font-size:11px;">· ' + escapeHtml(t.category) + '</span>' : '';
+    div.innerHTML = '<span>' + swatch + escapeHtml(t.name) + ' · ' + timeLabel + (t.paid_hours ? ' · paid ' + t.paid_hours : '') + catBadge + '</span>';
     const btnGroup = document.createElement('span');
     const addBtn = document.createElement('button');
     addBtn.textContent = 'Add to mine';
@@ -826,12 +912,13 @@ async function createTemplate(){
   const paidHours = document.getElementById('tpl-paid').value.trim();
   const description = document.getElementById('tpl-desc').value.trim();
   const color = document.getElementById('tpl-color').value;
+  const category = document.getElementById('tpl-category').value.trim();
   const legsData = legBuilders.tpl;
 
   const payload = {
     is_template: true, name,
     all_day: allDay, start_time: start, end_time: end,
-    paid_hours: paidHours, description, color, legs_data: legsData
+    paid_hours: paidHours, description, color, legs_data: legsData, category
   };
 
   let result;
@@ -1109,18 +1196,195 @@ async function bookHolidayFromOriginal(){
   document.getElementById('orig-hol-end').value = '';
   statusEl.style.color = 'var(--teal)';
   statusEl.textContent = 'Booked ' + rows.length + ' day' + (rows.length===1?'':'s') + ' of holiday.';
-  const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).eq('value', '__holiday__').order('override_date');
-  holidays = data || [];
+  const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
+  allOverrides = data || [];
+  holidays = allOverrides.filter(o => o.value === '__holiday__');
   renderHolidayList();
+  renderCalendarTab();
 }
 
 async function removeHoliday(id){
   await sb.from('overrides').delete().eq('id', id);
   holidays = holidays.filter(h => h.id !== id);
+  allOverrides = allOverrides.filter(o => o.id !== id);
   renderHolidayList();
+  renderCalendarTab();
 }
 
-function styleSelect(sel){
+function dateKeyLocal(d){
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+}
+
+function patternShiftForDate(dateStr){
+  if(!rotaStart) return '';
+  const start = new Date(rotaStart + 'T00:00:00');
+  const d = new Date(dateStr + 'T00:00:00');
+  const diffDays = Math.floor((d - start) / 86400000);
+  const len = weeks * 7;
+  let idx = diffDays % len;
+  if(idx < 0) idx += len;
+  return pattern[idx] || '';
+}
+
+function effectiveShift(dateStr){
+  const ov = allOverrides.find(o => o.override_date === dateStr);
+  if(ov) return ov.value;
+  return patternShiftForDate(dateStr);
+}
+
+function renderTentativeBanner(){
+  const banner = document.getElementById('tentative-banner');
+  const list = document.getElementById('tentative-list');
+  const tentative = allOverrides.filter(o => o.tentative);
+  if(tentative.length === 0){
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'block';
+  list.innerHTML = '';
+  tentative.forEach(o=>{
+    const div = document.createElement('div');
+    div.className = 'off-item';
+    const dateObj = new Date(o.override_date + 'T00:00:00');
+    const formatted = dateObj.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short', year:'numeric'});
+    div.innerHTML = '<span>' + formatted + '</span>';
+    const btn = document.createElement('button');
+    btn.textContent = 'Mark as confirmed';
+    btn.style.color = 'var(--teal)';
+    btn.onclick = ()=>confirmTentative(o.id);
+    div.appendChild(btn);
+    list.appendChild(div);
+  });
+}
+
+async function confirmTentative(id){
+  await sb.from('overrides').update({ tentative: false }).eq('id', id);
+  allOverrides = allOverrides.map(o => o.id === id ? { ...o, tentative: false } : o);
+  renderTentativeBanner();
+  renderCalendarTab();
+}
+
+function renderCalendarTab(){
+  renderTentativeBanner();
+  const listEl = document.getElementById('calendar-list');
+  const incomeEl = document.getElementById('calendar-income');
+  if(!listEl) return;
+  if(!rotaStart){
+    listEl.innerHTML = '<p class="empty">Set up your original rota in Account &amp; Setup first.</p>';
+    incomeEl.innerHTML = '';
+    return;
+  }
+  const months = parseInt(document.getElementById('calendar-range').value, 10);
+  const today = new Date(); today.setHours(0,0,0,0);
+  const end = new Date(today); end.setMonth(end.getMonth() + months);
+
+  listEl.innerHTML = '';
+  let weekTotal = 0, weekStartIdx = -1, grandTotal = 0, weekCount = 0;
+  const cursor = new Date(today);
+  let dayCount = 0;
+
+  while(cursor <= end){
+    const key = dateKeyLocal(cursor);
+    const shiftId = effectiveShift(key);
+    const shift = shiftTypes.find(s => s.id === shiftId);
+    const isHoliday = shiftId === '__holiday__';
+    const isBankHoliday = bankHolidays.has(key);
+    const ov = allOverrides.find(o => o.override_date === key);
+
+    const row = document.createElement('div');
+    row.className = 'off-item';
+    if(isBankHoliday) row.style.borderColor = 'var(--amber)';
+
+    const dateObj = new Date(cursor);
+    const dateLabel = dateObj.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
+    let label = dateLabel;
+    let swatch = '';
+    if(isHoliday){
+      label += ' — Holiday';
+    } else if(shift){
+      swatch = '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + (shift.color||'#F2A93B') + ';margin-right:6px;"></span>';
+      label += ' — ' + shift.name;
+      if(payRates.enabled){
+        label += ' (£' + shiftPay(shift, cursor.getDay()===0?0:cursor.getDay()).toFixed(2) + ')';
+      }
+    } else {
+      label += ' — —';
+    }
+    if(isBankHoliday) label += ' 🎉 Bank holiday';
+    if(ov && (ov.source === 'self_swap' || ov.source === 'friend_swap')) label += ' ⇄ swapped';
+    if(ov && ov.tentative) label += ' ⏳';
+
+    row.innerHTML = '<span>' + swatch + label + '</span>';
+    listEl.appendChild(row);
+
+    // weekly income subtotal (calendar weeks running Sun-Sat for display)
+    if(payRates.enabled && shift){
+      weekTotal += shiftPay(shift, cursor.getDay());
+    }
+    dayCount++;
+    if(cursor.getDay() === 6 || cursor.getTime() === end.getTime()){ // Saturday end of week, or final day
+      grandTotal += weekTotal;
+      weekCount++;
+      weekTotal = 0;
+    }
+
+    cursor.setDate(cursor.getDate()+1);
+  }
+
+  if(payRates.enabled){
+    incomeEl.innerHTML = '<div class="income-row total"><span>Estimated income, next ' + months + ' month' + (months===1?'':'s') + '</span><strong>£' + grandTotal.toFixed(2) + '</strong></div>';
+  } else {
+    incomeEl.innerHTML = '';
+  }
+}
+
+function initiateSelfSwap(){
+  const fromDate = document.getElementById('swap-from').value;
+  const toDate = document.getElementById('swap-to').value;
+  const statusEl = document.getElementById('swap-status');
+  if(!fromDate || !toDate || fromDate === toDate){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Pick two different dates.';
+    return;
+  }
+  pendingSwap = {
+    fromDate, toDate,
+    fromValue: effectiveShift(fromDate),
+    toValue: effectiveShift(toDate)
+  };
+  document.getElementById('swap-confirm-box').style.display = 'block';
+  statusEl.textContent = '';
+}
+
+async function finalizeSwap(choice){
+  if(!pendingSwap) return;
+  const statusEl = document.getElementById('swap-status');
+  const tentative = choice === 'need_to';
+  const rows = [
+    { user_id: currentUser.id, override_date: pendingSwap.fromDate, value: pendingSwap.toValue, source: 'self_swap', tentative },
+    { user_id: currentUser.id, override_date: pendingSwap.toDate, value: pendingSwap.fromValue, source: 'self_swap', tentative }
+  ];
+  statusEl.style.color = 'var(--text-dim)';
+  statusEl.textContent = 'Saving swap…';
+  const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
+  document.getElementById('swap-confirm-box').style.display = 'none';
+  if(error){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = error.message;
+    pendingSwap = null;
+    return;
+  }
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = tentative ? 'Swapped — flagged as needing workplace confirmation.' : 'Swapped.';
+  document.getElementById('swap-from').value = '';
+  document.getElementById('swap-to').value = '';
+  pendingSwap = null;
+  const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
+  allOverrides = data || [];
+  holidays = allOverrides.filter(o => o.value === '__holiday__');
+  renderHolidayList();
+  renderCalendarTab();
+}
   const shift = shiftTypes.find(s=>s.id===sel.value);
   if(shift){
     sel.style.background = shift.color || '#F2A93B';
@@ -1183,6 +1447,7 @@ loadRecentColors();
 renderRecentColors();
 renderLegRows('st');
 renderLegRows('tpl');
+loadBankHolidays();
 checkExistingSession();
 </script>
 </body>
