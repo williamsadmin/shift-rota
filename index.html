@@ -52,6 +52,8 @@
     font-family:'SF Mono',Consolas,monospace;font-size:12px;white-space:pre-wrap;color:var(--text-dim);margin-top:10px;
   }
   .leg-summary .gap-line{color:var(--amber);}
+  .leg-summary .pass-line{color:var(--teal);}
+  .leg-summary .warn-line{color:var(--danger);}
   input:focus, select:focus{outline:2px solid var(--amber);outline-offset:1px;}
   .row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
   .row > div{flex:1;min-width:90px;}
@@ -960,6 +962,11 @@ function compileDutyBoard(prefix){
 
   let lines = [];
   let totalLegMinutes = 0;
+  const BREAK_THRESHOLD = 30;    // minimum gap (min) that counts as a qualifying break
+  const CONTINUOUS_LIMIT = 330;  // 5h30m in minutes
+  let continuousDriving = 0;
+  let breakViolation = false;
+
   for(let i=0; i<timed.length; i++){
     const leg = timed[i];
     const legMinutes = leg.endAbs - leg.startAbs;
@@ -969,25 +976,61 @@ function compileDutyBoard(prefix){
     if(label) line += '  ' + label;
     if(leg.extra) line += '  — ' + leg.extra;
     lines.push(line);
+    lines.push(''); // blank line after each leg entry
+
+    continuousDriving += legMinutes;
+    if(continuousDriving >= CONTINUOUS_LIMIT) breakViolation = true;
 
     if(i < timed.length - 1){
       const gap = timed[i+1].startAbs - leg.endAbs;
       if(gap > 0){
-        lines.push(formatClock(leg.endAbs) + '–' + formatClock(timed[i+1].startAbs) + '  Gap (' + formatDuration(gap) + ')');
+        lines.push('Gap (' + formatDuration(gap) + ')');
+      }
+      if(gap >= BREAK_THRESHOLD){
+        continuousDriving = 0;
       }
     }
   }
 
   const span = timed[timed.length-1].endAbs - timed[0].startAbs;
+
+  // First separator before totals (blank already provided by last leg's trailing '')
+  lines.push('----------');
   lines.push('');
-  lines.push('Total leg time: ' + formatDuration(totalLegMinutes));
-  lines.push('Total span (first start to last end): ' + formatDuration(span));
+  lines.push('Total drive time: ' + formatDuration(totalLegMinutes));
+  lines.push('Total span: ' + formatDuration(span));
+
+  // Second separator before compliance section
+  lines.push('');
+  lines.push('----------');
+  lines.push('');
+
+  // GB Domestic Hours compliance (applies to local bus routes under 50 km)
+  const driveFail = totalLegMinutes > 10 * 60;
+  const spanFail = span > 16 * 60;
+  if(driveFail){
+    lines.push('⚠️ Drive time exceeds 10hr daily limit');
+  }
+  if(spanFail){
+    lines.push('⚠️ Shift span exceeds 16hr limit');
+  }
+  if(breakViolation){
+    lines.push('⚠️ No 30-min break by 5:30 continuous driving');
+  }
+  if(!driveFail && !spanFail && !breakViolation){
+    lines.push('✅ Within GB domestic hours limits');
+  }
 
   const compiled = lines.join('\n');
   hiddenEl.value = compiled;
 
-  // Re-render summary with gap lines highlighted
-  summaryEl.innerHTML = lines.map(l => l.includes('Gap (') ? '<span class="gap-line">' + escapeHtml(l) + '</span>' : escapeHtml(l)).join('\n');
+  // Re-render summary with highlighted lines
+  summaryEl.innerHTML = lines.map(l => {
+    if(l.startsWith('⚠️')) return '<span class="warn-line">' + escapeHtml(l) + '</span>';
+    if(l.startsWith('✅')) return '<span class="pass-line">' + escapeHtml(l) + '</span>';
+    if(l.startsWith('Gap (')) return '<span class="gap-line">' + escapeHtml(l) + '</span>';
+    return escapeHtml(l);
+  }).join('\n');
 }
 
 function loadRecentColors(){
