@@ -49,6 +49,10 @@
     flex:0 0 30px;height:38px;background:var(--surface-alt);border:1px solid var(--border);color:var(--danger);
     border-radius:7px;cursor:pointer;font-size:14px;
   }
+  .leg-row button.leg-insert{
+    flex:0 0 30px;height:38px;background:var(--surface-alt);border:1px solid var(--border);color:var(--teal);
+    border-radius:7px;cursor:pointer;font-size:16px;line-height:1;
+  }
   .leg-summary{
     background:var(--surface-alt);border:1px solid var(--border);border-radius:7px;padding:10px;
     font-family:'SF Mono',Consolas,monospace;font-size:12px;white-space:pre-wrap;color:var(--text-dim);margin-top:10px;
@@ -951,6 +955,13 @@ function removeLegRow(prefix, idx){
   renderLegRows(prefix);
 }
 
+function insertLegRow(prefix, idx){
+  const current = legBuilders[prefix][idx];
+  const newLeg = { start:'', end:'', route:'', from: current.to || '', to:'', extra:'' };
+  legBuilders[prefix].splice(idx + 1, 0, newLeg);
+  renderLegRows(prefix);
+}
+
 function renderLegRows(prefix){
   const container = document.getElementById(prefix + '-legs');
   container.innerHTML = '';
@@ -996,6 +1007,11 @@ function renderLegRows(prefix){
     extraInput.value = leg.extra || '';
     extraInput.oninput = ()=>{ leg.extra = extraInput.value; compileDutyBoard(prefix); };
 
+    const insertBtn = document.createElement('button');
+    insertBtn.className = 'leg-insert'; insertBtn.textContent = '+'; insertBtn.type = 'button';
+    insertBtn.title = 'Insert leg after this one';
+    insertBtn.onclick = ()=>insertLegRow(prefix, idx);
+
     const removeBtn = document.createElement('button');
     removeBtn.className = 'leg-remove'; removeBtn.textContent = '×'; removeBtn.type = 'button';
     removeBtn.onclick = ()=>removeLegRow(prefix, idx);
@@ -1007,6 +1023,7 @@ function renderLegRows(prefix){
     row.appendChild(arrowSpan);
     row.appendChild(toInput);
     row.appendChild(extraInput);
+    row.appendChild(insertBtn);
     row.appendChild(removeBtn);
     container.appendChild(row);
   });
