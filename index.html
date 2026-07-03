@@ -56,6 +56,12 @@
   .leg-summary .gap-line{color:var(--amber);}
   .leg-summary .pass-line{color:var(--teal);}
   .leg-summary .warn-line{color:var(--danger);}
+  .swap-pick-list{display:flex;flex-direction:column;gap:6px;max-height:220px;overflow-y:auto;}
+  .swap-pick-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:7px;border:1px solid var(--border);background:var(--surface-alt);cursor:pointer;font-size:13px;font-weight:600;transition:border-color .15s;}
+  .swap-pick-item:hover{border-color:var(--amber);}
+  .swap-pick-item.selected{border-color:var(--amber);background:var(--amber-dim);}
+  .swap-pick-dot{width:12px;height:12px;border-radius:50%;flex-shrink:0;}
+  .swap-pick-rest{font-style:italic;color:var(--text-dim);font-weight:400;}
   input:focus, select:focus{outline:2px solid var(--amber);outline-offset:1px;}
   .row{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;}
   .row > div{flex:1;min-width:90px;}
@@ -162,14 +168,14 @@
         <p class="sec-title">Change a day</p>
         <p class="help" style="margin-top:0;">Pick a date, then what it should become — a different shift, or a rest day. (Trading with a friend will be added once the Friends tab is built.)</p>
         <div class="row">
-          <div><label>Date</label><input type="date" id="swap-from"></div>
-          <div>
-            <label>Change to</label>
-            <select id="swap-to-shift">
-              <option value="">Rest day</option>
-            </select>
-          </div>
+          <div style="max-width:180px;"><label>Date</label><input type="date" id="swap-from"></div>
         </div>
+        <div style="margin-bottom:10px;">
+          <label>Change to</label>
+          <input type="text" id="swap-shift-search" placeholder="Search shifts…" oninput="renderSwapShiftPicker()" autocomplete="off">
+        </div>
+        <div id="swap-shift-picker" style="margin-bottom:10px;"></div>
+        <input type="hidden" id="swap-to-shift" value="">
         <button class="btn secondary full" onclick="initiateSelfSwap()">Apply change</button>
         <div id="swap-confirm-box" style="display:none;margin-top:12px;">
           <p class="help" style="margin-top:0;font-weight:600;color:var(--text);">Do you need to inform your workplace of this change?</p>
@@ -253,7 +259,7 @@
       <section>
         <p class="sec-title">Add a friend</p>
         <div class="row">
-          <div><input type="text" id="friend-search-input" placeholder="Search by email"></div>
+          <div><input type="text" id="friend-search-input" placeholder="Search by email or username"></div>
           <button class="btn secondary" onclick="searchUsers()" style="white-space:nowrap;">Search</button>
         </div>
         <div id="friend-search-results"></div>
@@ -2161,15 +2167,38 @@ function renderCalendarTab(){
 }
 
 function populateSwapToSelect(){
-  const sel = document.getElementById('swap-to-shift');
-  if(!sel) return;
-  sel.innerHTML = '<option value="">Rest day</option>';
-  shiftTypes.forEach(s=>{
-    const opt = document.createElement('option');
-    opt.value = s.id;
-    opt.textContent = s.name;
-    sel.appendChild(opt);
-  });
+  renderSwapShiftPicker();
+}
+
+function renderSwapShiftPicker(){
+  const el = document.getElementById('swap-shift-picker');
+  if(!el) return;
+  const term = (document.getElementById('swap-shift-search')?.value || '').trim().toLowerCase();
+  const current = document.getElementById('swap-to-shift')?.value || '';
+
+  const items = [{ id:'', name:'Rest day', color:'' }].concat(shiftTypes);
+  const visible = term ? items.filter(s => s.name.toLowerCase().includes(term)) : items;
+
+  if(visible.length === 0){
+    el.innerHTML = '<p class="empty" style="margin:0;font-size:12px;">No shifts match.</p>';
+    return;
+  }
+
+  el.innerHTML = '<div class="swap-pick-list">' + visible.map(s=>{
+    const sel = s.id === current ? ' selected' : '';
+    const dot = s.color
+      ? '<span class="swap-pick-dot" style="background:' + s.color + ';"></span>'
+      : '<span class="swap-pick-dot" style="background:var(--border);"></span>';
+    const label = s.id === ''
+      ? '<span class="swap-pick-rest">Rest day</span>'
+      : s.name;
+    return '<div class="swap-pick-item' + sel + '" onclick="selectSwapShift(' + JSON.stringify(s.id) + ')">' + dot + label + '</div>';
+  }).join('') + '</div>';
+}
+
+function selectSwapShift(id){
+  document.getElementById('swap-to-shift').value = id;
+  renderSwapShiftPicker();
 }
 
 function initiateSelfSwap(){
@@ -2205,6 +2234,9 @@ async function finalizeSwap(choice){
   statusEl.textContent = tentative ? 'Changed — flagged as needing workplace confirmation.' : 'Changed.';
   document.getElementById('swap-from').value = '';
   document.getElementById('swap-to-shift').value = '';
+  const searchEl = document.getElementById('swap-shift-search');
+  if(searchEl) searchEl.value = '';
+  renderSwapShiftPicker();
   pendingSwap = null;
   const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
   allOverrides = data || [];
