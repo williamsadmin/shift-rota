@@ -2223,13 +2223,16 @@ function renderSwapShiftPicker(){
   el.innerHTML = '<div class="swap-pick-list">' + visible.map(s=>{
     const sel = s.id === current ? ' selected' : '';
     const dot = s.color
-      ? '<span class="swap-pick-dot" style="background:' + s.color + ';"></span>'
+      ? '<span class="swap-pick-dot" style="background:' + escapeHtml(s.color) + ';"></span>'
       : '<span class="swap-pick-dot" style="background:var(--border);"></span>';
     const label = s.id === ''
       ? '<span class="swap-pick-rest">Rest day</span>'
-      : s.name;
-    return '<div class="swap-pick-item' + sel + '" onclick="selectSwapShift(' + JSON.stringify(s.id) + ')">' + dot + label + '</div>';
+      : escapeHtml(s.name);
+    return '<div class="swap-pick-item' + sel + '" data-shift-id="' + escapeHtml(s.id) + '">' + dot + label + '</div>';
   }).join('') + '</div>';
+  el.querySelectorAll('.swap-pick-item').forEach(item=>{
+    item.addEventListener('click', ()=>selectSwapShift(item.getAttribute('data-shift-id') || ''));
+  });
 }
 
 function selectSwapShift(id){
