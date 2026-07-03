@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
   :root{
     --bg:#1B1E26; --surface:#242833; --surface-alt:#2D323F; --border:#3A3F4D;
@@ -310,6 +311,28 @@
         <h1>Shared shift library</h1>
         <p class="sub" id="templates-sub">Add any of these straight into your own rota — no retyping times or rates.</p>
       </header>
+
+      <section id="pdf-import-section" style="display:none;">
+        <p class="sec-title">Import duty sheets from PDF</p>
+        <p class="help" style="margin-top:0;margin-bottom:12px;">Upload one or more duty PDFs (like a trentbarton-style DYxx sheet). Each one is parsed into a duty board automatically and added as a shared template — review and edit before importing. Once created, any user can add it to their own rota as normal.</p>
+        <div class="row">
+          <div>
+            <label>PDF file(s)</label>
+            <input type="file" id="pdf-import-files" accept="application/pdf" multiple>
+          </div>
+        </div>
+        <div class="row">
+          <div style="max-width:220px;">
+            <label>Category (applied to all)</label>
+            <input type="text" id="pdf-import-category" placeholder="e.g. Derby">
+          </div>
+        </div>
+        <button class="btn secondary" type="button" onclick="parsePdfImportFiles()">Parse PDF(s)</button>
+        <div class="status" id="pdf-import-parse-status"></div>
+        <div id="pdf-import-preview"></div>
+        <button class="btn full" id="pdf-import-commit-btn" style="display:none;margin-top:10px;" onclick="commitPdfImport()">Import all</button>
+        <div class="status" id="pdf-import-status"></div>
+      </section>
 
       <section id="template-create-section" style="display:none;">
         <p class="sec-title">Create a new template</p>
@@ -1134,6 +1157,276 @@ function compileDutyBoard(prefix){
   }).join('\n');
 }
 
+/* ---------- PDF duty sheet import ---------- */
+
+const PDF_DAY_MAP = { SUN:0, MON:1, TUE:2, WED:3, THU:4, FRI:5, SAT:6 };
+// Lines that are structural/header noise and must never be mistaken for a stop+time row.
+const PDF_LEG_SKIP_RE = /^(Service\b|Revenue No\.|Journey No\.|Direction\b|Destination Code:|Bus Board No\.|Show NOT IN SERVICE|Sign ON|Commencing|Printed on|Page \d|Days:|ALWAYS BOARD)/i;
+
+function pdfMilToHHMM(raw){
+  const s = raw.padStart(4,'0');
+  return s.slice(0,2) + ':' + s.slice(2);
+}
+
+function pdfCleanStopName(name){
+  return name.replace(/\[[A-Za-z0-9]+\]\s*$/,'').trim();
+}
+
+// Parses the raw text of one duty-sheet PDF into a duty object matching this app's
+// shift-type shape ({ name, allowedDays, start, end, paidHours, legs, warnings }).
+// Heuristic — built to match the trentbarton-style DYxx sheet layout. Multi-line
+// wrapped stop names in the source PDF can end up truncated; review before saving.
+function parseDutyPdfText(text){
+  const warnings = [];
+  const rawLines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+  const fullText = rawLines.join('\n');
+
+  let name = '';
+  const dutyM = fullText.match(/Duty Number:\s*(\S+)/i);
+  if(dutyM) name = dutyM[1]; else warnings.push('Could not find a duty number — check the name field.');
+
+  let allowedDays = [false,false,false,false,false,false,false];
+  const daysM = fullText.match(/\b((?:SUN|MON|TUE|WED|THU|FRI|SAT)(?:,(?:SUN|MON|TUE|WED|THU|FRI|SAT))*)\s+Duty Number:/i);
+  if(daysM){
+    daysM[1].toUpperCase().split(',').forEach(d => { if(PDF_DAY_MAP[d] !== undefined) allowedDays[PDF_DAY_MAP[d]] = true; });
+  } else {
+    warnings.push('Could not find the days pattern — none selected, set manually.');
+  }
+
+  let start = '', end = '', paidHours = '';
+  const signM = fullText.match(/Sign ON:\s*(\d{3,4})\s*Sign OFF:\s*(\d{3,4})\s*Paid Time:\s*(\d{1,2}:\d{2})/i);
+  if(signM){
+    start = pdfMilToHHMM(signM[1]);
+    end = pdfMilToHHMM(signM[2]);
+    const [ph, pm] = signM[3].split(':');
+    paidHours = ph.padStart(2,'0') + ':' + pm;
+  } else {
+    warnings.push('Could not find Sign ON/OFF/Paid Time — set times manually.');
+  }
+
+  // Walk the lines building up "groups" (one per Service/Light run, plus Break rows).
+  const legs = [];
+  let group = null;
+  const flushGroup = () => {
+    if(!group || group.stops.length === 0){ group = null; return; }
+    const first = group.stops[0];
+    const last = group.stops[group.stops.length - 1];
+    const mid = group.stops.slice(1, -1);
+    legs.push({
+      start: pdfMilToHHMM(first.time),
+      end: pdfMilToHHMM(last.time),
+      route: group.route,
+      from: pdfCleanStopName(first.name),
+      to: pdfCleanStopName(last.name),
+      extra: mid.map(s => pdfCleanStopName(s.name) + ' ' + pdfMilToHHMM(s.time)).join(', ')
+    });
+    group = null;
+  };
+
+  for(let i = 0; i < rawLines.length; i++){
+    const line = rawLines[i];
+
+    const svcM = line.match(/^Service\s+(\S+)/i);
+    if(svcM){ flushGroup(); group = { route: 'Service ' + svcM[1], stops: [] }; continue; }
+    if(/^Light$/i.test(line)){ flushGroup(); group = { route: 'Light run', stops: [] }; continue; }
+
+    const jnyM = line.match(/^Journey No\.\s*(\S+)/i);
+    if(jnyM && group){ group.route += ' · Jny ' + jnyM[1]; continue; }
+
+    const breakM = line.match(/^Break\/As Req\s+(\d{3,4})\s*-\s*(\d{3,4})/i);
+    if(breakM){
+      flushGroup();
+      legs.push({ start: pdfMilToHHMM(breakM[1]), end: pdfMilToHHMM(breakM[2]), route: 'Break', from: '', to: '', extra: '' });
+      continue;
+    }
+
+    if(/^Leave Bus/i.test(line)){
+      // Attach as a note to whichever leg was just closed (the last one pushed).
+      if(legs.length > 0) legs[legs.length-1].extra = [legs[legs.length-1].extra, line].filter(Boolean).join('; ');
+      continue;
+    }
+
+    if(PDF_LEG_SKIP_RE.test(line)) continue;
+
+    const stopM = line.match(/^(.+?)\s+(\d{3,4})$/);
+    if(stopM && group){
+      group.stops.push({ name: stopM[1], time: stopM[2] });
+    }
+  }
+  flushGroup();
+
+  if(legs.length === 0) warnings.push('No legs could be parsed — the duty board will be empty, add legs manually.');
+
+  return { name, allowedDays, start, end, paidHours, legs, warnings, sourceText: fullText };
+}
+
+async function extractPdfText(file){
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let text = '';
+  for(let p = 1; p <= pdf.numPages; p++){
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    // pdf.js gives us item-level text; join with newlines using each item's own line breaks
+    // isn't directly available, so we rely on 'hasEOL'-like spacing via y-position changes.
+    let lastY = null, lineParts = [];
+    const lines = [];
+    content.items.forEach(item => {
+      const y = item.transform[5];
+      if(lastY !== null && Math.abs(y - lastY) > 2){
+        lines.push(lineParts.join(' '));
+        lineParts = [];
+      }
+      lineParts.push(item.str);
+      lastY = y;
+    });
+    if(lineParts.length) lines.push(lineParts.join(' '));
+    text += lines.join('\n') + '\n';
+  }
+  return text;
+}
+
+let pdfImportParsed = []; // array of { duty, include }
+
+async function parsePdfImportFiles(){
+  const input = document.getElementById('pdf-import-files');
+  const statusEl = document.getElementById('pdf-import-parse-status');
+  const files = Array.from(input.files || []);
+  if(files.length === 0){ statusEl.style.color='var(--danger)'; statusEl.textContent='Choose at least one PDF first.'; return; }
+  statusEl.style.color = 'var(--text-dim)';
+  statusEl.textContent = 'Parsing ' + files.length + ' file(s)…';
+  pdfImportParsed = [];
+  for(const file of files){
+    try{
+      const text = await extractPdfText(file);
+      const duty = parseDutyPdfText(text);
+      pdfImportParsed.push({ duty, include: true, sourceFile: file.name });
+    } catch(err){
+      pdfImportParsed.push({ duty: null, include: false, sourceFile: file.name, error: err.message || String(err) });
+    }
+  }
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = 'Parsed ' + pdfImportParsed.length + ' file(s) — review below, then Import all.';
+  renderPdfImportPreview();
+}
+
+function renderPdfImportPreview(){
+  const container = document.getElementById('pdf-import-preview');
+  container.innerHTML = '';
+  pdfImportParsed.forEach((entry, idx) => {
+    const card = document.createElement('section');
+    card.style.marginTop = '10px';
+
+    if(!entry.duty){
+      card.innerHTML = '<p class="sec-title" style="color:var(--danger);">' + escapeHtml(entry.sourceFile) + ' — failed to parse</p><p class="help">' + escapeHtml(entry.error || '') + '</p>';
+      container.appendChild(card);
+      return;
+    }
+
+    const d = entry.duty;
+    const title = document.createElement('div');
+    title.className = 'checkbox-row';
+    const chk = document.createElement('input');
+    chk.type = 'checkbox'; chk.checked = entry.include;
+    chk.onchange = () => { entry.include = chk.checked; };
+    const lbl = document.createElement('label');
+    lbl.textContent = entry.sourceFile;
+    lbl.style.fontWeight = '600';
+    title.appendChild(chk); title.appendChild(lbl);
+    card.appendChild(title);
+
+    if(d.warnings.length){
+      const w = document.createElement('p');
+      w.className = 'help'; w.style.color = 'var(--amber)';
+      w.textContent = d.warnings.join(' ');
+      card.appendChild(w);
+    }
+
+    const row1 = document.createElement('div'); row1.className = 'row';
+    const nameWrap = document.createElement('div');
+    nameWrap.innerHTML = '<label>Name</label>';
+    const nameInput = document.createElement('input'); nameInput.type='text'; nameInput.value = d.name;
+    nameInput.oninput = () => { d.name = nameInput.value; };
+    nameWrap.appendChild(nameInput);
+    row1.appendChild(nameWrap);
+
+    const startWrap = document.createElement('div');
+    startWrap.innerHTML = '<label>Start</label>';
+    const startInput = document.createElement('input'); startInput.type='time'; startInput.value = d.start;
+    startInput.oninput = () => { d.start = startInput.value; };
+    startWrap.appendChild(startInput);
+    row1.appendChild(startWrap);
+
+    const endWrap = document.createElement('div');
+    endWrap.innerHTML = '<label>End</label>';
+    const endInput = document.createElement('input'); endInput.type='time'; endInput.value = d.end;
+    endInput.oninput = () => { d.end = endInput.value; };
+    endWrap.appendChild(endInput);
+    row1.appendChild(endWrap);
+
+    const paidWrap = document.createElement('div');
+    paidWrap.innerHTML = '<label>Paid hours</label>';
+    const paidInput = document.createElement('input'); paidInput.type='text'; paidInput.value = d.paidHours;
+    paidInput.oninput = () => { d.paidHours = paidInput.value; };
+    paidWrap.appendChild(paidInput);
+    row1.appendChild(paidWrap);
+    card.appendChild(row1);
+
+    const daysRow = document.createElement('div'); daysRow.className = 'row';
+    ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].forEach((lbl2, di) => {
+      const cw = document.createElement('label'); cw.className = 'checkbox-row'; cw.style.margin='0';
+      const cb = document.createElement('input'); cb.type='checkbox'; cb.checked = d.allowedDays[di];
+      cb.onchange = () => { d.allowedDays[di] = cb.checked; };
+      cw.appendChild(cb); cw.appendChild(document.createTextNode(' ' + lbl2));
+      daysRow.appendChild(cw);
+    });
+    card.appendChild(daysRow);
+
+    const legsPreview = document.createElement('div');
+    legsPreview.className = 'leg-summary';
+    legsPreview.textContent = d.legs.length === 0 ? 'No legs parsed.' :
+      d.legs.map(l => l.start + '–' + l.end + '  ' + [l.route, [l.from,l.to].filter(Boolean).join(' → ')].filter(Boolean).join(' · ') + (l.extra ? '  — ' + l.extra : '')).join('\n');
+    card.appendChild(legsPreview);
+
+    container.appendChild(card);
+  });
+  document.getElementById('pdf-import-commit-btn').style.display = pdfImportParsed.some(e => e.duty) ? 'block' : 'none';
+}
+
+async function commitPdfImport(){
+  const target = 'tpl'; // admin-only import always creates shared templates, available to any user afterwards
+  const category = document.getElementById('pdf-import-category').value.trim();
+  const statusEl = document.getElementById('pdf-import-status');
+  const toImport = pdfImportParsed.filter(e => e.include && e.duty);
+  if(toImport.length === 0){ statusEl.style.color='var(--danger)'; statusEl.textContent='Nothing selected to import.'; return; }
+
+  statusEl.style.color = 'var(--text-dim)';
+  let done = 0;
+  for(const entry of toImport){
+    const d = entry.duty;
+    document.getElementById(target + '-name').value = d.name;
+    document.getElementById('tpl-category').value = category;
+    document.getElementById(target + '-allday').checked = false;
+    document.getElementById(target + '-start').value = d.start;
+    document.getElementById(target + '-end').value = d.end;
+    document.getElementById(target + '-paid').value = d.paidHours;
+    for(let i=0;i<7;i++) document.getElementById('tpl-day-' + i).checked = d.allowedDays[i];
+    legBuilders[target] = d.legs.map(l => ({ ...l }));
+    renderLegRows(target);
+
+    statusEl.textContent = 'Importing ' + (done+1) + ' of ' + toImport.length + ' (' + d.name + ')…';
+    await createTemplate();
+    done++;
+  }
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = 'Imported ' + done + ' duty/duties.';
+  pdfImportParsed = [];
+  document.getElementById('pdf-import-preview').innerHTML = '';
+  document.getElementById('pdf-import-commit-btn').style.display = 'none';
+  document.getElementById('pdf-import-files').value = '';
+}
+
 function loadRecentColors(){
   try{
     const raw = localStorage.getItem('recentShiftColors');
@@ -1284,6 +1577,7 @@ async function loadAccountData(){
   document.getElementById('username-input').value = myUsername;
   document.getElementById('template-create-section').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('rota-template-create-section').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('pdf-import-section').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('admin-tab-btn').style.display = isAdmin ? '' : 'none';
   if(isAdmin) renderRtplGrid();
   const tplSub = document.getElementById('templates-sub');
