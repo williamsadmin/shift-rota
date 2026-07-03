@@ -2266,8 +2266,15 @@ async function finalizeSwap(choice){
     pendingSwap = null;
     return;
   }
+  const newShift = shiftTypes.find(s => s.id === pendingSwap.newValue);
+  const toLabel = pendingSwap.newValue === '' ? 'Rest day'
+    : pendingSwap.newValue === '__holiday__' ? 'Holiday'
+    : (newShift ? newShift.name : 'the new shift');
+  const dateLabel = new Date(pendingSwap.date + 'T00:00:00')
+    .toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short' });
   statusEl.style.color = 'var(--teal)';
-  statusEl.textContent = tentative ? 'Changed — flagged as needing workplace confirmation.' : 'Changed.';
+  statusEl.textContent = dateLabel + ' changed to ' + toLabel
+    + (tentative ? ' — flagged as needing workplace confirmation.' : '.');
   document.getElementById('swap-from').value = '';
   document.getElementById('swap-to-shift').value = '';
   const searchEl = document.getElementById('swap-shift-search');
