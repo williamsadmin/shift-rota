@@ -88,6 +88,12 @@
   .status{font-size:12px;min-height:16px;margin-top:8px;}
   .empty{color:var(--text-dim);font-size:13px;}
   .off-item{display:flex;align-items:center;justify-content:space-between;background:var(--surface-alt);border:1px solid var(--border);border-radius:7px;padding:8px 10px;font-size:13px;margin-bottom:8px;}
+  .people-name{display:flex;align-items:center;gap:8px;min-width:0;}
+  .people-name .name-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .star-btn{background:none;border:none;cursor:pointer;font-size:18px;line-height:1;padding:0;color:var(--border);flex-shrink:0;}
+  .star-btn.pinned{color:var(--amber);}
+  .people-subhead{font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);margin:14px 0 8px;}
+  .people-subhead:first-child{margin-top:0;}
   .off-item button{background:none;border:none;color:var(--danger);cursor:pointer;font-size:13px;font-weight:600;}
   .day-cell-readonly{padding:8px 4px;font-size:11px;text-align:center;border-radius:6px;font-weight:600;background:var(--surface-alt);color:var(--text-dim);}
   .day-cell-readonly .pay-line{display:block;font-weight:400;font-size:10px;margin-top:2px;opacity:.85;}
@@ -128,6 +134,7 @@
   <p class="sub" style="margin-bottom:16px;">Your rota, holidays and pay, saved to your account — open it from any device.</p>
   <section>
     <div class="row"><div><label>Email</label><input type="email" id="auth-email" autocomplete="email"></div></div>
+    <div class="row" id="auth-username-row" style="display:none;"><div><label>Username</label><input type="text" id="auth-username" autocomplete="username" placeholder="e.g. ryanw"></div></div>
     <div class="row"><div><label>Password</label><input type="password" id="auth-password" autocomplete="current-password"></div></div>
     <button class="btn full" id="auth-submit-btn" onclick="submitAuth()">Log in</button>
     <div class="status" id="auth-status"></div>
@@ -149,7 +156,7 @@
   <div class="tabbar">
     <button class="tab-btn active" data-tab="calendar" onclick="switchTab('calendar')">My Calendar</button>
     <button class="tab-btn" data-tab="original" onclick="switchTab('original')">Original Rota</button>
-    <button class="tab-btn" data-tab="friends" onclick="switchTab('friends')">Friends</button>
+    <button class="tab-btn" data-tab="friends" onclick="switchTab('friends')">People</button>
     <button class="tab-btn" data-tab="templates" onclick="switchTab('templates')">Templates</button>
     <button class="tab-btn" data-tab="account" onclick="switchTab('account')">Account &amp; Setup</button>
     <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
@@ -255,28 +262,18 @@
     </div>
     <div class="tab-panel" id="tab-friends">
       <header style="margin-bottom:16px;">
-        <p class="eyebrow">Friends</p>
-        <h1>Friends &amp; their rotas</h1>
-        <p class="sub">Search for someone, send a request, and once they accept you can see their fully updated rota.</p>
+        <p class="eyebrow">People</p>
+        <h1>Everyone's rotas</h1>
+        <p class="sub">Browse everyone on Shift Rota, view their rota, and star the people you check most so they stay at the top.</p>
       </header>
 
       <section>
-        <p class="sec-title">Add a friend</p>
+        <p class="sec-title">Find people</p>
         <div class="row">
-          <div><input type="text" id="friend-search-input" placeholder="Search by email or username"></div>
-          <button class="btn secondary" onclick="searchUsers()" style="white-space:nowrap;">Search</button>
+          <div><input type="text" id="people-search-input" placeholder="Search by username or name" oninput="renderPeopleList()"></div>
         </div>
-        <div id="friend-search-results"></div>
-      </section>
-
-      <section id="friend-requests-section" style="display:none;">
-        <p class="sec-title">Requests</p>
-        <div id="friend-requests-list"></div>
-      </section>
-
-      <section>
-        <p class="sec-title">My friends</p>
-        <div id="my-friends-list"></div>
+        <div class="status" id="people-load-status"></div>
+        <div id="people-list" style="margin-top:12px;"></div>
       </section>
 
       <section id="friend-detail-section" style="display:none;">
@@ -437,7 +434,7 @@
 
       <section>
         <p class="sec-title">Your username</p>
-        <p class="help" style="margin-top:0;">Lets friends search for and add you without needing your email.</p>
+        <p class="help" style="margin-top:0;">This is how you appear to everyone else in the People list.</p>
         <div class="row">
           <div><input type="text" id="username-input" placeholder="e.g. ryanw"></div>
           <button class="btn secondary" onclick="saveUsername()" style="white-space:nowrap;">Save</button>
@@ -598,9 +595,10 @@ let isSignup = false;
 let allOverrides = []; // every override row for the current user, not just holidays
 let bankHolidays = new Set();
 let pendingSwap = null; // { fromDate, toDate, fromValue, toValue }
-let allFriendships = []; // every friendship row involving me
-let profileCache = {}; // id -> profile, for friend display
-let selectedFriend = null; // profile of the friend currently being viewed
+let profileCache = {}; // id -> profile, for display
+let allProfiles = []; // every other user's profile, for the People list
+let pinnedIds = new Set(); // ids of users I've starred
+let selectedFriend = null; // profile of the person currently being viewed
 let friendData = { rota: null, overrides: [], shiftTypes: [] };
 let allAdminProfiles = []; // loaded once per admin session for account management
 let adminEditRota = null; // { userId, weeks, weekStartDay, rotaStart, pattern, shiftTypes }
@@ -614,24 +612,87 @@ function friendLabel(p){
   return p.username ? '@' + p.username : (p.display_name || p.email);
 }
 
-async function loadFriendsTab(){
-  const { data } = await sb.from('friendships')
-    .select('*')
-    .or('user_a.eq.' + currentUser.id + ',user_b.eq.' + currentUser.id);
-  allFriendships = data || [];
-
-  const otherIds = [...new Set(allFriendships.map(f => f.user_a === currentUser.id ? f.user_b : f.user_a))];
-  if(otherIds.length > 0){
-    const { data: profs } = await sb.from('profiles').select('id,email,display_name,username').in('id', otherIds);
-    (profs || []).forEach(p => profileCache[p.id] = p);
+async function loadPeopleTab(){
+  const statusEl = document.getElementById('people-load-status');
+  if(statusEl){ statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Loading people…'; }
+  const [profRes, pinRes] = await Promise.all([
+    sb.from('profiles').select('id,email,display_name,username').order('username'),
+    sb.from('pinned_users').select('pinned_id').eq('user_id', currentUser.id)
+  ]);
+  if(profRes.error){
+    if(statusEl){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Could not load people: ' + profRes.error.message; }
+    return;
   }
-
-  renderFriendRequests();
-  renderMyFriends();
+  allProfiles = (profRes.data || []).filter(p => p.id !== currentUser.id);
+  allProfiles.forEach(p => profileCache[p.id] = p);
+  pinnedIds = new Set(((pinRes && pinRes.data) || []).map(r => r.pinned_id));
+  if(statusEl) statusEl.textContent = '';
+  renderPeopleList();
 }
 
-function otherUserId(f){
-  return f.user_a === currentUser.id ? f.user_b : f.user_a;
+function renderPeopleList(){
+  const el = document.getElementById('people-list');
+  if(!el) return;
+  const term = (document.getElementById('people-search-input').value || '').trim().toLowerCase();
+  const matches = p => !term
+    || (p.username || '').toLowerCase().includes(term)
+    || (p.display_name || '').toLowerCase().includes(term)
+    || (p.email || '').toLowerCase().includes(term);
+  const visible = allProfiles.filter(matches);
+  if(visible.length === 0){
+    el.innerHTML = '<p class="empty">' + (allProfiles.length === 0
+      ? 'No one else has signed up yet.'
+      : 'No one matches that search.') + '</p>';
+    return;
+  }
+  const pinned = visible.filter(p => pinnedIds.has(p.id));
+  const others = visible.filter(p => !pinnedIds.has(p.id));
+  el.innerHTML = '';
+  const section = (title, list) => {
+    if(list.length === 0) return;
+    const head = document.createElement('p');
+    head.className = 'people-subhead';
+    head.textContent = title;
+    el.appendChild(head);
+    list.forEach(p => el.appendChild(personRow(p)));
+  };
+  section('Starred', pinned);
+  section(pinned.length ? 'Everyone else' : 'Everyone', others);
+}
+
+function personRow(p){
+  const div = document.createElement('div');
+  div.className = 'off-item';
+  const left = document.createElement('div');
+  left.className = 'people-name';
+  const isPinned = pinnedIds.has(p.id);
+  const star = document.createElement('button');
+  star.className = 'star-btn' + (isPinned ? ' pinned' : '');
+  star.textContent = isPinned ? '★' : '☆';
+  star.title = isPinned ? 'Unstar' : 'Star';
+  star.onclick = ()=>togglePin(p.id);
+  const name = document.createElement('span');
+  name.className = 'name-text';
+  name.textContent = friendLabel(p);
+  left.appendChild(star); left.appendChild(name);
+  div.appendChild(left);
+  const btn = document.createElement('button');
+  btn.textContent = 'View rota';
+  btn.style.color = 'var(--teal)';
+  btn.onclick = ()=>selectFriend(p);
+  div.appendChild(btn);
+  return div;
+}
+
+async function togglePin(userId){
+  if(pinnedIds.has(userId)){
+    pinnedIds.delete(userId);
+    await sb.from('pinned_users').delete().eq('user_id', currentUser.id).eq('pinned_id', userId);
+  } else {
+    pinnedIds.add(userId);
+    await sb.from('pinned_users').insert({ user_id: currentUser.id, pinned_id: userId });
+  }
+  renderPeopleList();
 }
 
 async function saveUsername(){
@@ -656,127 +717,6 @@ async function saveUsername(){
   statusEl.textContent = 'Saved.';
 }
 
-async function searchUsers(){
-  const term = document.getElementById('friend-search-input').value.trim();
-  const resultsEl = document.getElementById('friend-search-results');
-  if(!term){ resultsEl.innerHTML = ''; return; }
-  const { data, error } = await sb.from('profiles').select('id,email,display_name,username')
-    .or('username.ilike.%' + term + '%,email.ilike.%' + term + '%')
-    .limit(10);
-  resultsEl.innerHTML = '';
-  if(error){
-    resultsEl.innerHTML = '<p class="empty">Search failed: ' + escapeHtml(error.message) + '</p>';
-    return;
-  }
-  const results = (data || []).filter(p => p.id !== currentUser.id);
-  if(results.length === 0){
-    resultsEl.innerHTML = '<p class="empty">No matches.</p>';
-    return;
-  }
-  results.forEach(p=>{
-    profileCache[p.id] = p;
-    const existing = allFriendships.find(f => otherUserId(f) === p.id);
-    const div = document.createElement('div');
-    div.className = 'off-item';
-    div.innerHTML = '<span>' + escapeHtml(p.username ? '@' + p.username : (p.display_name || p.email)) + '</span>';
-    if(existing){
-      const tag = document.createElement('span');
-      tag.style.color = 'var(--text-dim)';
-      tag.textContent = existing.status === 'accepted' ? 'Already friends'
-        : existing.requested_by === currentUser.id ? 'Request sent' : 'Request pending';
-      div.appendChild(tag);
-    } else {
-      const btn = document.createElement('button');
-      btn.textContent = 'Send request';
-      btn.style.color = 'var(--teal)';
-      btn.onclick = ()=>sendFriendRequest(p.id);
-      div.appendChild(btn);
-    }
-    resultsEl.appendChild(div);
-  });
-}
-
-async function sendFriendRequest(targetId){
-  const { data, error } = await sb.from('friendships').insert({
-    user_a: currentUser.id, user_b: targetId, requested_by: currentUser.id, status: 'pending'
-  }).select().single();
-  if(!error){
-    allFriendships.push(data);
-    searchUsers();
-  }
-}
-
-async function respondToRequest(id, status){
-  await sb.from('friendships').update({ status }).eq('id', id);
-  allFriendships = allFriendships.map(f => f.id === id ? { ...f, status } : f);
-  renderFriendRequests();
-  renderMyFriends();
-}
-
-function renderFriendRequests(){
-  const section = document.getElementById('friend-requests-section');
-  const el = document.getElementById('friend-requests-list');
-  const incoming = allFriendships.filter(f => f.status === 'pending' && f.requested_by !== currentUser.id);
-  const outgoing = allFriendships.filter(f => f.status === 'pending' && f.requested_by === currentUser.id);
-  if(incoming.length === 0 && outgoing.length === 0){
-    section.style.display = 'none';
-    return;
-  }
-  section.style.display = 'block';
-  el.innerHTML = '';
-  incoming.forEach(f=>{
-    const p = profileCache[otherUserId(f)];
-    const div = document.createElement('div');
-    div.className = 'off-item';
-    div.innerHTML = '<span>' + escapeHtml(friendLabel(p)) + ' wants to be friends</span>';
-    const btnGroup = document.createElement('span');
-    const acceptBtn = document.createElement('button');
-    acceptBtn.textContent = 'Accept';
-    acceptBtn.style.color = 'var(--teal)';
-    acceptBtn.onclick = ()=>respondToRequest(f.id, 'accepted');
-    btnGroup.appendChild(acceptBtn);
-    const declineBtn = document.createElement('button');
-    declineBtn.textContent = 'Decline';
-    declineBtn.style.marginLeft = '10px';
-    declineBtn.onclick = ()=>respondToRequest(f.id, 'declined');
-    btnGroup.appendChild(declineBtn);
-    div.appendChild(btnGroup);
-    el.appendChild(div);
-  });
-  outgoing.forEach(f=>{
-    const p = profileCache[otherUserId(f)];
-    const div = document.createElement('div');
-    div.className = 'off-item';
-    div.innerHTML = '<span>Waiting for ' + escapeHtml(p ? friendLabel(p) : 'them') + ' to accept</span>';
-    const cancelBtn = document.createElement('button');
-    cancelBtn.textContent = 'Cancel';
-    cancelBtn.onclick = ()=>respondToRequest(f.id, 'declined');
-    div.appendChild(cancelBtn);
-    el.appendChild(div);
-  });
-}
-
-function renderMyFriends(){
-  const el = document.getElementById('my-friends-list');
-  const accepted = allFriendships.filter(f => f.status === 'accepted');
-  if(accepted.length === 0){
-    el.innerHTML = '<p class="empty">No friends yet — search above to add some.</p>';
-    return;
-  }
-  el.innerHTML = '';
-  accepted.forEach(f=>{
-    const p = profileCache[otherUserId(f)];
-    const div = document.createElement('div');
-    div.className = 'off-item';
-    div.innerHTML = '<span>' + escapeHtml(p ? friendLabel(p) : 'Friend') + '</span>';
-    const btn = document.createElement('button');
-    btn.textContent = 'View rota';
-    btn.style.color = 'var(--teal)';
-    btn.onclick = ()=>selectFriend(p);
-    div.appendChild(btn);
-    el.appendChild(div);
-  });
-}
 
 async function selectFriend(profile){
   if(!profile) return;
@@ -1176,6 +1116,7 @@ function toggleAuthMode(){
   isSignup = !isSignup;
   document.getElementById('auth-title').textContent = isSignup ? 'Sign up' : 'Log in';
   document.getElementById('auth-submit-btn').textContent = isSignup ? 'Sign up' : 'Log in';
+  document.getElementById('auth-username-row').style.display = isSignup ? 'flex' : 'none';
   document.getElementById('auth-toggle').innerHTML = isSignup
     ? 'Already have an account? <a onclick="toggleAuthMode()">Log in</a>'
     : "Don't have an account? <a onclick=\"toggleAuthMode()\">Sign up</a>";
@@ -1191,12 +1132,23 @@ async function submitAuth(){
     statusEl.textContent = 'Enter both an email and a password.';
     return;
   }
+  let username = '';
+  if(isSignup){
+    const rawUsername = document.getElementById('auth-username').value.trim();
+    username = rawUsername.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    if(!username){
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = 'Choose a username (letters, numbers and underscores).';
+      return;
+    }
+    document.getElementById('auth-username').value = username;
+  }
   statusEl.style.color = 'var(--text-dim)';
   statusEl.textContent = isSignup ? 'Signing up…' : 'Logging in…';
   try{
     let result;
     if(isSignup){
-      result = await sb.auth.signUp({ email, password });
+      result = await sb.auth.signUp({ email, password, options: { data: { username } } });
     } else {
       result = await sb.auth.signInWithPassword({ email, password });
     }
@@ -1209,7 +1161,10 @@ async function submitAuth(){
     await onLoggedIn(result.data.session.user);
   }catch(e){
     statusEl.style.color = 'var(--danger)';
-    statusEl.textContent = e.message || 'Something went wrong.';
+    const msg = (e.message || '').toLowerCase();
+    statusEl.textContent = (msg.includes('username') || msg.includes('duplicate') || msg.includes('unique'))
+      ? 'That username is already taken — try another.'
+      : (e.message || 'Something went wrong.');
   }
 }
 
@@ -1263,7 +1218,17 @@ async function loadAccountData(){
   allOverrides = ovRes.data || [];
   holidays = allOverrides.filter(o => o.value === '__holiday__');
   isAdmin = (profileRes.data && profileRes.data.is_admin) || false;
-  document.getElementById('username-input').value = (profileRes.data && profileRes.data.username) || '';
+  let myUsername = (profileRes.data && profileRes.data.username) || '';
+  // Self-heal: if a username was chosen at signup (stored in auth metadata) but the
+  // profile row doesn't have it yet, write it now.
+  if(!myUsername){
+    const metaUsername = (currentUser.user_metadata && currentUser.user_metadata.username) || '';
+    if(metaUsername){
+      const { error: healErr } = await sb.from('profiles').update({ username: metaUsername }).eq('id', currentUser.id);
+      if(!healErr) myUsername = metaUsername;
+    }
+  }
+  document.getElementById('username-input').value = myUsername;
   document.getElementById('template-create-section').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('rota-template-create-section').style.display = isAdmin ? 'block' : 'none';
   document.getElementById('admin-tab-btn').style.display = isAdmin ? '' : 'none';
@@ -1317,7 +1282,7 @@ async function loadAccountData(){
   renderOriginalGrid();
   renderHolidayList();
   renderCalendarTab();
-  loadFriendsTab();
+  loadPeopleTab();
   if(isAdmin) loadAdminTab();
 }
 
