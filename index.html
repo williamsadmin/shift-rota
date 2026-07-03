@@ -142,6 +142,7 @@
     <button class="tab-btn" data-tab="friends" onclick="switchTab('friends')">Friends</button>
     <button class="tab-btn" data-tab="templates" onclick="switchTab('templates')">Templates</button>
     <button class="tab-btn" data-tab="account" onclick="switchTab('account')">Account &amp; Setup</button>
+    <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
   </div>
 
   <div class="wrap">
@@ -351,13 +352,46 @@
         <div class="status" id="tpl-create-status"></div>
       </section>
 
+      <section id="rota-template-create-section" style="display:none;">
+        <p class="sec-title">Create a rota template</p>
+        <p class="help" style="margin-top:0;margin-bottom:12px;">Build a full rota pattern from shared shift templates — anyone can apply it to their account instantly.</p>
+        <div class="row">
+          <div><label>Template name</label><input type="text" id="rtpl-name" placeholder="e.g. Standard 5-week driver rota"></div>
+        </div>
+        <div class="row">
+          <div><label>Description (optional)</label><input type="text" id="rtpl-desc-text" placeholder="e.g. Mon–Sat mixed duties, depot A"></div>
+        </div>
+        <div class="row">
+          <div style="max-width:200px;">
+            <label>Pattern length (weeks)</label>
+            <select id="rtpl-weeks" onchange="changeRtplWeeks()">
+              <option value="1">1 week</option><option value="2">2 weeks</option><option value="3">3 weeks</option>
+              <option value="4">4 weeks</option><option value="5" selected>5 weeks</option><option value="6">6 weeks</option>
+              <option value="7">7 weeks</option><option value="8">8 weeks</option><option value="9">9 weeks</option>
+              <option value="10">10 weeks</option><option value="11">11 weeks</option><option value="12">12 weeks</option>
+            </select>
+          </div>
+          <div style="max-width:200px;">
+            <label>Week starts on</label>
+            <select id="rtpl-week-start" onchange="renderRtplGrid()">
+              <option value="0">Sunday</option><option value="1" selected>Monday</option>
+            </select>
+          </div>
+        </div>
+        <div id="rtpl-grid" style="margin-bottom:10px;"></div>
+        <button class="btn full" id="rtpl-submit-btn" onclick="saveRotaTemplate()">Create rota template</button>
+        <button class="btn secondary full" id="rtpl-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelRotaTemplateEdit()">Cancel edit</button>
+        <div class="status" id="rtpl-status"></div>
+      </section>
+
       <section>
-        <p class="sec-title">Available templates</p>
+        <p class="sec-title">Available shift templates</p>
         <div class="row">
           <div style="max-width:220px;">
             <label>Filter by category</label>
             <select id="tpl-filter" onchange="renderTemplatesBrowseList()">
-              <option value="">All categories</option>
+              <option value="">— Select a category —</option>
+              <option value="__all__">All</option>
             </select>
           </div>
           <div style="max-width:160px;">
@@ -375,6 +409,12 @@
           </div>
         </div>
         <div id="templates-browse-list"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Rota templates</p>
+        <p class="help" style="margin-top:0;">Apply a full pre-built rota to your account — adds any required shifts to your collection and loads the complete pattern.</p>
+        <div id="rota-templates-list"></div>
       </section>
     </div>
 
@@ -504,6 +544,22 @@
       <button class="btn full" onclick="saveOriginalRota()">Save my original rota</button>
       <div class="status" id="save-status"></div>
     </div>
+
+    <div class="tab-panel" id="tab-admin">
+      <header style="margin-bottom:16px;">
+        <p class="eyebrow">Admin</p>
+        <h1>Account management</h1>
+        <p class="sub">View, edit, and wipe user accounts. Auth accounts must be self-registered — you cannot create them from here, and hard-deleting the auth record requires the Supabase dashboard.</p>
+      </header>
+      <section>
+        <p class="sec-title">Find accounts</p>
+        <div class="row">
+          <div><input type="text" id="admin-search-input" placeholder="Filter by email or username" oninput="renderAdminAccountList()"></div>
+        </div>
+        <div class="status" id="admin-load-status"></div>
+        <div id="admin-account-list" style="margin-top:12px;"></div>
+      </section>
+    </div>
   </div>
 </div>
 
@@ -520,7 +576,8 @@ function getDayLabels(){
 }
 let currentUser = null;
 let shiftTypes = [];     // personal shift types
-let templates = [];      // admin templates (is_template = true)
+let templates = [];      // admin shift templates (is_template = true, category != '__rota__')
+let rotaTemplates = [];  // admin rota templates (is_template = true, category == '__rota__')
 let pattern = Array(35).fill('');
 let weeks = 5;
 let rotaStart = '';
@@ -535,6 +592,11 @@ let allFriendships = []; // every friendship row involving me
 let profileCache = {}; // id -> profile, for friend display
 let selectedFriend = null; // profile of the friend currently being viewed
 let friendData = { rota: null, overrides: [], shiftTypes: [] };
+let allAdminProfiles = []; // loaded once per admin session for account management
+// Rota template builder state (admin only)
+let rtplWeeks = 5;
+let rtplPattern = Array(35).fill('');
+let editingRtpl = null;
 
 function friendLabel(p){
   if(!p) return 'Someone';
@@ -1170,16 +1232,22 @@ async function loadAccountData(){
     sb.from('profiles').select('is_admin,username').eq('id', currentUser.id).maybeSingle()
   ]);
   shiftTypes = stRes.data || [];
-  templates = tplRes.data || [];
+  // Separate shift templates from rota templates
+  const allTpl = tplRes.data || [];
+  templates = allTpl.filter(t => t.category !== '__rota__');
+  rotaTemplates = allTpl.filter(t => t.category === '__rota__');
   allOverrides = ovRes.data || [];
   holidays = allOverrides.filter(o => o.value === '__holiday__');
   isAdmin = (profileRes.data && profileRes.data.is_admin) || false;
   document.getElementById('username-input').value = (profileRes.data && profileRes.data.username) || '';
   document.getElementById('template-create-section').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('rota-template-create-section').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('admin-tab-btn').style.display = isAdmin ? '' : 'none';
+  if(isAdmin) renderRtplGrid();
   const tplSub = document.getElementById('templates-sub');
   if(tplSub){
     tplSub.textContent = isAdmin
-      ? 'Create shared shift types here, or add any existing one straight into your own rota.'
+      ? 'Create shared shift types and full rota templates here, or add any existing one straight into your own rota.'
       : 'Add any of these straight into your own rota — no retyping times or rates.';
   }
   if(payRes.data){
@@ -1213,14 +1281,20 @@ async function loadAccountData(){
   document.getElementById('rota-start').value = rotaStart;
   document.getElementById('weeks-select').value = String(weeks);
   document.getElementById('week-start-day').value = String(weekStartDay);
+
+  // Auto-sync unmodified user copies with any template changes (runs client-side on load)
+  await syncTemplateCopies();
+
   await loadShareLink();
   renderShiftTypeList();
   renderTemplatesBrowseList();
+  renderRotaTemplateList();
   renderGrid();
   renderOriginalGrid();
   renderHolidayList();
   renderCalendarTab();
   loadFriendsTab();
+  if(isAdmin) loadAdminTab();
 }
 
 async function addShiftType(){
@@ -1240,6 +1314,17 @@ async function addShiftType(){
     all_day: allDay, start_time: start, end_time: end,
     paid_hours: paidHours, description, color, legs_data: legsData
   };
+
+  // If the user is editing a template-derived copy, detach it so future template updates
+  // don't overwrite their customisations.
+  let wasTemplateDerived = false;
+  if(editingItem.st){
+    const original = shiftTypes.find(s => s.id === editingItem.st);
+    if(original && original.source_template_id){
+      payload.source_template_id = null;
+      wasTemplateDerived = true;
+    }
+  }
 
   let result;
   if(editingItem.st){
@@ -1262,7 +1347,9 @@ async function addShiftType(){
   rememberColor(color);
   cancelEdit('st');
   statusEl.style.color = 'var(--teal)';
-  statusEl.textContent = editingItem.st ? 'Updated.' : 'Added.';
+  statusEl.textContent = wasTemplateDerived
+    ? 'Saved as your own copy — no longer synced to the shared template.'
+    : (editingItem.st ? 'Updated.' : 'Added.');
   renderShiftTypeList();
   renderGrid();
 }
@@ -1433,11 +1520,18 @@ function renderTemplatesBrowseList(){
   const filterSelect = document.getElementById('tpl-filter');
   const categories = [...new Set(templates.map(t => t.category).filter(Boolean))].sort();
   const currentFilter = filterSelect.value;
-  filterSelect.innerHTML = '<option value="">All categories</option>' +
-    categories.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
-  filterSelect.value = categories.includes(currentFilter) ? currentFilter : '';
+  // Keep the static "Select a category" and "All" options, then append real categories
+  filterSelect.innerHTML =
+    '<option value="">— Select a category —</option>' +
+    '<option value="__all__"' + (currentFilter === '__all__' ? ' selected' : '') + '>All</option>' +
+    categories.map(c => '<option value="' + escapeHtml(c) + '"' + (currentFilter === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>').join('');
 
-  const activeFilter = filterSelect.value;
+  if(!filterSelect.value){
+    el.innerHTML = '<p class="empty">Select a category above to browse shift templates, or choose "All" to see everything.</p>';
+    return;
+  }
+
+  const activeFilter = filterSelect.value === '__all__' ? null : filterSelect.value;
   let visible = activeFilter ? templates.filter(t => t.category === activeFilter) : templates;
 
   const dayFilterSelect = document.getElementById('tpl-day-filter');
@@ -1539,18 +1633,29 @@ async function createTemplate(){
   }
   if(editingItem.tpl){
     templates = templates.map(t => t.id === data.id ? data : t);
+    // Push changes to all unmodified user copies (those still linked via source_template_id)
+    const syncPayload = {
+      name: data.name, all_day: data.all_day, start_time: data.start_time, end_time: data.end_time,
+      paid_hours: data.paid_hours, description: data.description, color: data.color,
+      legs_data: data.legs_data, allowed_days: data.allowed_days
+    };
+    await sb.from('shift_types').update(syncPayload)
+      .eq('source_template_id', data.id).eq('is_template', false);
   } else {
     templates.push(data);
   }
   rememberColor(color);
   cancelEdit('tpl');
   statusEl.style.color = 'var(--teal)';
-  statusEl.textContent = editingItem.tpl ? 'Template updated.' : 'Template created.';
+  statusEl.textContent = editingItem.tpl ? 'Template updated and synced to all unmodified copies.' : 'Template created.';
   renderTemplatesBrowseList();
   populateCopyFromSelects();
 }
 
 async function deleteTemplate(id){
+  if(!confirm('Delete this template? Users\' copies will remain but will no longer receive updates. This cannot be undone.')) return;
+  // Detach all user copies so they become independent personal shifts
+  await sb.from('shift_types').update({ source_template_id: null }).eq('source_template_id', id);
   await sb.from('shift_types').delete().eq('id', id);
   templates = templates.filter(t => t.id !== id);
   renderTemplatesBrowseList();
@@ -2174,6 +2279,349 @@ renderLegRows('st');
 renderLegRows('tpl');
 loadBankHolidays();
 checkExistingSession();
+
+// =====================================================================
+// TEMPLATE COPY AUTO-SYNC
+// Runs on load. Compares each user copy against its source template and
+// updates fields that differ — only if source_template_id is still set
+// (cleared when the user intentionally edits their copy).
+// =====================================================================
+async function syncTemplateCopies(){
+  const linked = shiftTypes.filter(s => s.source_template_id);
+  if(!linked.length) return;
+  for(const copy of linked){
+    const src = templates.find(t => t.id === copy.source_template_id);
+    if(!src) continue;
+    const changed = copy.name !== src.name || copy.color !== src.color ||
+      copy.all_day !== src.all_day || copy.start_time !== src.start_time ||
+      copy.end_time !== src.end_time || copy.paid_hours !== src.paid_hours ||
+      JSON.stringify(copy.legs_data) !== JSON.stringify(src.legs_data) ||
+      JSON.stringify(copy.allowed_days) !== JSON.stringify(src.allowed_days);
+    if(changed){
+      const syncPayload = {
+        name: src.name, all_day: src.all_day, start_time: src.start_time, end_time: src.end_time,
+        paid_hours: src.paid_hours, description: src.description, color: src.color,
+        legs_data: src.legs_data, allowed_days: src.allowed_days
+      };
+      const { data } = await sb.from('shift_types').update(syncPayload).eq('id', copy.id).select().single();
+      if(data) shiftTypes = shiftTypes.map(s => s.id === data.id ? data : s);
+    }
+  }
+}
+
+// =====================================================================
+// ROTA TEMPLATES  (stored as shift_types with category='__rota__')
+// legs_data holds { weeks, week_start_day, pattern: [tplShiftId|'', ...] }
+// =====================================================================
+
+function changeRtplWeeks(){
+  const newW = parseInt(document.getElementById('rtpl-weeks').value, 10);
+  rtplPattern = resizePatternArray(rtplPattern, newW);
+  rtplWeeks = newW;
+  renderRtplGrid();
+}
+
+function renderRtplGrid(){
+  const grid = document.getElementById('rtpl-grid');
+  if(!grid) return;
+  grid.innerHTML = '';
+  grid.className = 'grid';
+  const wsd = parseInt(document.getElementById('rtpl-week-start').value, 10);
+  const labels = DAY_LABELS.slice(wsd).concat(DAY_LABELS.slice(0, wsd));
+  for(let w=0; w<rtplWeeks; w++){
+    const marker = document.createElement('div');
+    marker.className = 'week-marker';
+    marker.textContent = 'Week ' + (w+1);
+    grid.appendChild(marker);
+    labels.forEach(d=>{ const l=document.createElement('div'); l.className='day-label'; l.textContent=d; grid.appendChild(l); });
+    for(let d=0; d<7; d++){
+      const idx = w*7+d;
+      const cell = document.createElement('div');
+      const sel = document.createElement('select');
+      const blank = document.createElement('option'); blank.value=''; blank.textContent='—'; sel.appendChild(blank);
+      templates.forEach(t=>{
+        const opt=document.createElement('option'); opt.value=t.id; opt.textContent=t.name; sel.appendChild(opt);
+      });
+      sel.value = rtplPattern[idx] || '';
+      styleRtplSelect(sel);
+      sel.addEventListener('change', ()=>{ rtplPattern[idx]=sel.value; styleRtplSelect(sel); });
+      cell.appendChild(sel); grid.appendChild(cell);
+    }
+  }
+}
+
+function styleRtplSelect(sel){
+  const t = templates.find(t=>t.id===sel.value);
+  if(t){ sel.style.background=t.color||'#43C6AC'; sel.style.color='#1B1E26'; sel.style.border='none'; }
+  else { sel.style.background='var(--surface-alt)'; sel.style.color='var(--text-dim)'; sel.style.border='1px solid var(--border)'; }
+}
+
+async function saveRotaTemplate(){
+  const statusEl = document.getElementById('rtpl-status');
+  const name = document.getElementById('rtpl-name').value.trim();
+  if(!name){ statusEl.style.color='var(--danger)'; statusEl.textContent='Enter a name.'; return; }
+  const wsd = parseInt(document.getElementById('rtpl-week-start').value, 10);
+  const payload = {
+    is_template: true, owner_id: null, name,
+    description: document.getElementById('rtpl-desc-text').value.trim(),
+    category: '__rota__', color: '#43C6AC',
+    all_day: true, start_time: '', end_time: '', paid_hours: '',
+    legs_data: { weeks: rtplWeeks, week_start_day: wsd, pattern: [...rtplPattern] },
+    allowed_days: [true,true,true,true,true,true,true]
+  };
+  let result;
+  if(editingRtpl){
+    result = await sb.from('shift_types').update(payload).eq('id', editingRtpl).select().single();
+  } else {
+    result = await sb.from('shift_types').insert(payload).select().single();
+  }
+  const { data, error } = result;
+  if(error){ statusEl.style.color='var(--danger)'; statusEl.textContent=error.message; return; }
+  if(editingRtpl){
+    rotaTemplates = rotaTemplates.map(r => r.id===data.id ? data : r);
+  } else {
+    rotaTemplates.push(data);
+  }
+  cancelRotaTemplateEdit();
+  statusEl.style.color='var(--teal)';
+  statusEl.textContent = editingRtpl ? 'Rota template updated.' : 'Rota template created.';
+  renderRotaTemplateList();
+}
+
+function startEditRotaTemplate(rtpl){
+  editingRtpl = rtpl.id;
+  document.getElementById('rtpl-name').value = rtpl.name;
+  document.getElementById('rtpl-desc-text').value = rtpl.description || '';
+  const ld = rtpl.legs_data || {};
+  rtplWeeks = ld.weeks || 5;
+  rtplPattern = (ld.pattern || []).slice();
+  if(rtplPattern.length !== rtplWeeks*7) rtplPattern = resizePatternArray(rtplPattern, rtplWeeks);
+  document.getElementById('rtpl-weeks').value = String(rtplWeeks);
+  document.getElementById('rtpl-week-start').value = String(ld.week_start_day || 0);
+  renderRtplGrid();
+  document.getElementById('rtpl-submit-btn').textContent = 'Save changes';
+  document.getElementById('rtpl-cancel-btn').style.display = 'block';
+  document.getElementById('rota-template-create-section').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function cancelRotaTemplateEdit(){
+  editingRtpl = null;
+  document.getElementById('rtpl-name').value = '';
+  document.getElementById('rtpl-desc-text').value = '';
+  rtplWeeks = 5;
+  rtplPattern = Array(35).fill('');
+  document.getElementById('rtpl-weeks').value = '5';
+  document.getElementById('rtpl-week-start').value = '1';
+  renderRtplGrid();
+  document.getElementById('rtpl-submit-btn').textContent = 'Create rota template';
+  document.getElementById('rtpl-cancel-btn').style.display = 'none';
+}
+
+async function deleteRotaTemplate(id){
+  if(!confirm('Delete this rota template? This cannot be undone.')) return;
+  await sb.from('shift_types').delete().eq('id', id);
+  rotaTemplates = rotaTemplates.filter(r => r.id !== id);
+  renderRotaTemplateList();
+}
+
+async function applyRotaTemplate(rtpl){
+  const ld = rtpl.legs_data || {};
+  const newWeeks = ld.weeks || 5;
+  const wsd = ld.week_start_day || 0;
+  const tplPattern = ld.pattern || [];
+  if(!confirm('Apply "' + escapeHtml(rtpl.name) + '" to your rota? This replaces your current pattern. Your existing shift types are kept, and any missing template shifts are added to your collection.')) return;
+
+  // Map template shift IDs → user's personal copy IDs, creating copies as needed
+  const usedIds = [...new Set(tplPattern.filter(Boolean))];
+  const idMap = {};
+  for(const tplId of usedIds){
+    const existing = shiftTypes.find(s => s.source_template_id === tplId);
+    if(existing){ idMap[tplId] = existing.id; continue; }
+    const src = templates.find(t => t.id === tplId);
+    if(src){
+      const { data } = await sb.from('shift_types').insert({
+        owner_id: currentUser.id, is_template: false, name: src.name,
+        all_day: src.all_day, start_time: src.start_time, end_time: src.end_time,
+        paid_hours: src.paid_hours, description: src.description, color: src.color,
+        legs_data: src.legs_data, source_template_id: src.id, allowed_days: src.allowed_days
+      }).select().single();
+      if(data){ shiftTypes.push(data); idMap[tplId] = data.id; }
+    }
+  }
+
+  const newPattern = resizePatternArray(tplPattern.map(id => idMap[id] || ''), newWeeks);
+  const { error } = await sb.from('rota_settings').upsert({
+    user_id: currentUser.id,
+    rota_start: rotaStart || new Date().toISOString().slice(0,10),
+    weeks: newWeeks, week_start_day: wsd, original_pattern: newPattern,
+    updated_at: new Date().toISOString()
+  });
+  if(error){ alert('Could not apply template: ' + error.message); return; }
+
+  weeks = newWeeks; weekStartDay = wsd; pattern = newPattern;
+  document.getElementById('weeks-select').value = String(weeks);
+  document.getElementById('week-start-day').value = String(weekStartDay);
+  renderShiftTypeList(); renderGrid(); renderOriginalGrid(); renderCalendarTab();
+  switchTab('account');
+}
+
+function renderRotaTemplateList(){
+  const el = document.getElementById('rota-templates-list');
+  if(!el) return;
+  if(rotaTemplates.length === 0){
+    el.innerHTML = '<p class="empty">' + (isAdmin ? 'No rota templates yet — create one in the section above.' : 'No rota templates available yet.') + '</p>';
+    return;
+  }
+  el.innerHTML = '';
+  rotaTemplates.forEach(rtpl=>{
+    const ld = rtpl.legs_data || {};
+    const div = document.createElement('div');
+    div.className = 'off-item';
+    const weeks = ld.weeks || '?';
+    const wsd = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][ld.week_start_day || 0];
+    div.innerHTML = '<span><strong style="color:var(--text);">' + escapeHtml(rtpl.name) + '</strong>'
+      + ' <span style="color:var(--text-dim);font-size:12px;">· ' + weeks + ' week' + (weeks!==1?'s':'') + ', week starts ' + wsd + '</span>'
+      + (rtpl.description ? '<br><span style="font-size:12px;color:var(--text-dim);">' + escapeHtml(rtpl.description) + '</span>' : '') + '</span>';
+    const btnGroup = document.createElement('span');
+    const applyBtn = document.createElement('button');
+    applyBtn.textContent = 'Apply to my rota';
+    applyBtn.style.color = 'var(--teal)';
+    applyBtn.onclick = ()=>applyRotaTemplate(rtpl);
+    btnGroup.appendChild(applyBtn);
+    if(isAdmin){
+      const editBtn = document.createElement('button');
+      editBtn.textContent = 'Edit'; editBtn.style.marginLeft='10px';
+      editBtn.onclick = ()=>startEditRotaTemplate(rtpl);
+      btnGroup.appendChild(editBtn);
+      const delBtn = document.createElement('button');
+      delBtn.textContent = 'Delete'; delBtn.style.marginLeft='10px';
+      delBtn.onclick = ()=>deleteRotaTemplate(rtpl.id);
+      btnGroup.appendChild(delBtn);
+    }
+    div.appendChild(btnGroup);
+    el.appendChild(div);
+  });
+}
+
+// =====================================================================
+// ADMIN ACCOUNT MANAGEMENT
+// =====================================================================
+
+async function loadAdminTab(){
+  const statusEl = document.getElementById('admin-load-status');
+  statusEl.style.color='var(--text-dim)'; statusEl.textContent='Loading accounts…';
+  const { data, error } = await sb.from('profiles').select('id,email,username,is_admin').order('email');
+  if(error){
+    statusEl.style.color='var(--danger)';
+    statusEl.textContent='Could not load accounts. You may need to add an RLS policy to the profiles table: allow admins to select all rows.';
+    return;
+  }
+  allAdminProfiles = data || [];
+  statusEl.textContent='';
+  renderAdminAccountList();
+}
+
+function renderAdminAccountList(){
+  const el = document.getElementById('admin-account-list');
+  if(!el || !allAdminProfiles.length) return;
+  const query = (document.getElementById('admin-search-input').value || '').toLowerCase();
+  const visible = query
+    ? allAdminProfiles.filter(p => (p.email||'').toLowerCase().includes(query) || (p.username||'').toLowerCase().includes(query))
+    : allAdminProfiles;
+  if(visible.length === 0){ el.innerHTML='<p class="empty">No accounts match.</p>'; return; }
+  el.innerHTML='';
+  visible.forEach(p=>{
+    const div = document.createElement('div');
+    div.className = 'off-item';
+    div.style.flexWrap = 'wrap'; div.style.gap = '8px';
+    const infoSpan = document.createElement('span');
+    infoSpan.style.flex = '1';
+    infoSpan.innerHTML =
+      '<strong style="color:var(--text);">' + escapeHtml(p.email||'(no email)') + '</strong>'
+      + (p.username ? ' <span style="color:var(--amber);font-size:12px;">@' + escapeHtml(p.username) + '</span>' : '')
+      + (p.is_admin ? ' <span style="color:var(--teal);font-size:11px;"> · admin</span>' : '');
+    div.appendChild(infoSpan);
+    const btnGroup = document.createElement('span');
+    btnGroup.style.display='flex'; btnGroup.style.gap='8px'; btnGroup.style.flexWrap='wrap';
+    const editBtn = document.createElement('button');
+    editBtn.textContent = 'Edit'; editBtn.style.color='var(--text-dim)';
+    editBtn.onclick = ()=>showAdminEditProfile(p, div);
+    btnGroup.appendChild(editBtn);
+    const dataBtn = document.createElement('button');
+    dataBtn.textContent = 'Wipe data'; dataBtn.style.color='var(--danger)';
+    dataBtn.onclick = ()=>wipeUserData(p);
+    btnGroup.appendChild(dataBtn);
+    div.appendChild(btnGroup);
+    el.appendChild(div);
+  });
+}
+
+function showAdminEditProfile(p, parentDiv){
+  // Replace the row with an inline edit form
+  parentDiv.innerHTML = '';
+  parentDiv.style.flexDirection = 'column'; parentDiv.style.gap = '8px';
+
+  const usernameInput = document.createElement('input');
+  usernameInput.type = 'text'; usernameInput.placeholder = 'Username';
+  usernameInput.value = p.username || ''; usernameInput.style.flex='1';
+
+  const adminLabel = document.createElement('label');
+  adminLabel.className = 'checkbox-row'; adminLabel.style.margin='0';
+  const adminCheck = document.createElement('input');
+  adminCheck.type='checkbox'; adminCheck.checked = !!p.is_admin; adminCheck.style.width='auto';
+  adminLabel.appendChild(adminCheck);
+  const adminText = document.createElement('span');
+  adminText.textContent = ' Admin'; adminLabel.appendChild(adminText);
+
+  const saveBtn = document.createElement('button');
+  saveBtn.className='btn secondary'; saveBtn.textContent='Save';
+  saveBtn.style.padding='6px 12px'; saveBtn.style.fontSize='13px';
+
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className='btn secondary'; cancelBtn.textContent='Cancel';
+  cancelBtn.style.padding='6px 12px'; cancelBtn.style.fontSize='13px';
+  cancelBtn.onclick = ()=>renderAdminAccountList();
+
+  const row1 = document.createElement('div');
+  row1.style.display='flex'; row1.style.gap='8px'; row1.style.alignItems='center';
+  row1.appendChild(usernameInput); row1.appendChild(adminLabel);
+
+  const row2 = document.createElement('div');
+  row2.style.display='flex'; row2.style.gap='8px';
+  row2.appendChild(saveBtn); row2.appendChild(cancelBtn);
+
+  const info = document.createElement('span');
+  info.style.color='var(--text-dim)'; info.style.fontSize='12px';
+  info.textContent = p.email || '(no email)';
+
+  parentDiv.appendChild(info);
+  parentDiv.appendChild(row1);
+  parentDiv.appendChild(row2);
+
+  saveBtn.onclick = async ()=>{
+    const newUsername = usernameInput.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
+    const newAdmin = adminCheck.checked;
+    saveBtn.textContent = 'Saving…'; saveBtn.disabled=true;
+    const { error } = await sb.from('profiles').update({ username: newUsername||null, is_admin: newAdmin }).eq('id', p.id);
+    if(error){ alert('Error: ' + error.message); saveBtn.textContent='Save'; saveBtn.disabled=false; return; }
+    allAdminProfiles = allAdminProfiles.map(x => x.id===p.id ? { ...x, username:newUsername, is_admin:newAdmin } : x);
+    renderAdminAccountList();
+  };
+}
+
+async function wipeUserData(p){
+  if(!confirm('Wipe ALL data for ' + (p.email||p.id) + '? This deletes their shifts, rota, overrides, pay rates, and calendar share. Their auth account remains — they can still log in. This cannot be undone.')) return;
+  if(!confirm('Are you sure? This is permanent.')) return;
+  await Promise.all([
+    sb.from('shift_types').delete().eq('owner_id', p.id),
+    sb.from('rota_settings').delete().eq('user_id', p.id),
+    sb.from('overrides').delete().eq('user_id', p.id),
+    sb.from('pay_rates').delete().eq('user_id', p.id),
+    sb.from('calendar_shares').delete().eq('user_id', p.id),
+    sb.from('friendships').delete().or('user_a.eq.' + p.id + ',user_b.eq.' + p.id)
+  ]);
+  alert('Data wiped for ' + (p.email||p.id) + '.');
+}
 </script>
 </body>
 </html>
