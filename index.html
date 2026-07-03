@@ -412,7 +412,7 @@
           <div style="max-width:200px;">
             <label>Week starts on</label>
             <select id="rtpl-week-start" onchange="renderRtplGrid()">
-              <option value="0">Sunday</option><option value="1" selected>Monday</option>
+              <option value="0" selected>Sunday</option><option value="1">Monday</option>
             </select>
           </div>
         </div>
@@ -2772,7 +2772,7 @@ function cancelRotaTemplateEdit(){
   rtplWeeks = 5;
   rtplPattern = Array(35).fill('');
   document.getElementById('rtpl-weeks').value = '5';
-  document.getElementById('rtpl-week-start').value = '1';
+  document.getElementById('rtpl-week-start').value = '0';
   renderRtplGrid();
   document.getElementById('rtpl-submit-btn').textContent = 'Create rota template';
   document.getElementById('rtpl-cancel-btn').style.display = 'none';
@@ -2999,7 +2999,7 @@ async function loadAdminUserRota(userId, container, btn){
   adminEditRota = {
     userId,
     weeks: w,
-    weekStartDay: (r && r.week_start_day != null) ? r.week_start_day : 1,
+    weekStartDay: (r && r.week_start_day != null) ? r.week_start_day : 0,
     rotaStart: (r && r.rota_start) || '',
     pattern: resizePatternArray((r && r.original_pattern) || [], w),
     shiftTypes: stRes.data || []
@@ -3045,6 +3045,26 @@ function renderAdminRotaGrid(container){
   ctrl.appendChild(startWrap); ctrl.appendChild(weeksWrap); ctrl.appendChild(wsdWrap);
   container.appendChild(ctrl);
 
+  // Apply a rota template to this user
+  if(rotaTemplates.length > 0){
+    const tplWrap = document.createElement('div');
+    tplWrap.style.cssText = 'display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;flex-wrap:wrap;';
+    const selWrap = mkWrap('Apply a rota template', '');
+    selWrap.style.flex = '1'; selWrap.style.minWidth = '180px';
+    const tplSel = document.createElement('select');
+    tplSel.innerHTML = '<option value="">— Choose a template —</option>' +
+      rotaTemplates.map(rt => '<option value="' + rt.id + '">' + escapeHtml(rt.name) + '</option>').join('');
+    selWrap.appendChild(tplSel);
+    const applyBtn = document.createElement('button');
+    applyBtn.className = 'btn secondary'; applyBtn.textContent = 'Apply'; applyBtn.style.whiteSpace = 'nowrap';
+    applyBtn.onclick = ()=>{
+      const rt = rotaTemplates.find(r => r.id === tplSel.value);
+      if(rt) applyRotaTemplateToAdmin(rt, container);
+    };
+    tplWrap.appendChild(selWrap); tplWrap.appendChild(applyBtn);
+    container.appendChild(tplWrap);
+  }
+
   // Pattern grid
   const grid = document.createElement('div');
   grid.className = 'grid'; grid.style.marginBottom = '10px';
@@ -3063,10 +3083,26 @@ function renderAdminRotaGrid(container){
         if(!allowed&&s.id!==current) return;
         const opt=document.createElement('option'); opt.value=s.id; opt.textContent=s.name+(allowed?'':' (!)'); sel.appendChild(opt);
       });
+      // Offer any shared shift template the user hasn't got yet — picking one adds it to them
+      const toOffer = templates.filter(t => !ar.shiftTypes.some(s => s.source_template_id === t.id)
+        && (!t.allowed_days || t.allowed_days[realWeekday] !== false));
+      if(toOffer.length){
+        const og=document.createElement('optgroup'); og.label='Add from templates';
+        toOffer.forEach(t=>{ const opt=document.createElement('option'); opt.value='tpl:'+t.id; opt.textContent=t.name+' (add)'; og.appendChild(opt); });
+        sel.appendChild(og);
+      }
       sel.value=current;
       const styleSel=()=>{ const sh=ar.shiftTypes.find(s=>s.id===sel.value); if(sh){sel.style.background=sh.color||'#F2A93B';sel.style.color='#1B1E26';sel.style.border='none';}else{sel.style.background='var(--surface-alt)';sel.style.color='var(--text-dim)';sel.style.border='1px solid var(--border)';} };
       styleSel();
-      sel.addEventListener('change',()=>{ ar.pattern[idx]=sel.value; styleSel(); });
+      sel.addEventListener('change', async ()=>{
+        if(sel.value.startsWith('tpl:')){
+          const newId = await adminEnsureShiftCopy(sel.value.slice(4));
+          ar.pattern[idx] = newId || '';
+          renderAdminRotaGrid(container); // re-render so the new shift shows in every dropdown
+          return;
+        }
+        ar.pattern[idx]=sel.value; styleSel();
+      });
       cell.appendChild(sel); grid.appendChild(cell);
     }
   }
@@ -3092,6 +3128,47 @@ function renderAdminRotaGrid(container){
   };
   container.appendChild(saveBtn);
   container.appendChild(saveStatus);
+}
+
+// Give the edited user a personal copy of a shared shift template (if they don't
+// have one already) and return its id. Used by both the day dropdowns and the
+// rota-template picker in the admin editor.
+async function adminEnsureShiftCopy(tplId){
+  const ar = adminEditRota;
+  const existing = ar.shiftTypes.find(s => s.source_template_id === tplId);
+  if(existing) return existing.id;
+  const src = templates.find(t => t.id === tplId);
+  if(!src) return '';
+  const { data, error } = await sb.from('shift_types').insert({
+    owner_id: ar.userId, is_template: false, name: src.name,
+    all_day: src.all_day, start_time: src.start_time, end_time: src.end_time,
+    paid_hours: src.paid_hours, description: src.description, color: src.color,
+    legs_data: src.legs_data, source_template_id: src.id, allowed_days: src.allowed_days
+  }).select().single();
+  if(error){ alert('Could not add shift "' + src.name + '" for this user: ' + error.message); return ''; }
+  if(data){ ar.shiftTypes.push(data); return data.id; }
+  return '';
+}
+
+async function applyRotaTemplateToAdmin(rtpl, container){
+  const ar = adminEditRota;
+  const ld = rtpl.legs_data || {};
+  const newWeeks = ld.weeks || 5;
+  const wsd = (ld.week_start_day != null) ? ld.week_start_day : 0;
+  const tplPattern = ld.pattern || [];
+  if(!confirm('Apply "' + rtpl.name + '" to this user\'s rota? It replaces the pattern below (nothing is saved until you press Save rota). Any template shifts they don\'t have are added to their shift types.')) return;
+
+  const usedIds = [...new Set(tplPattern.filter(Boolean))];
+  const idMap = {};
+  for(const tplId of usedIds){
+    const mapped = await adminEnsureShiftCopy(tplId);
+    if(mapped) idMap[tplId] = mapped;
+  }
+
+  ar.weeks = newWeeks;
+  ar.weekStartDay = wsd;
+  ar.pattern = resizePatternArray(tplPattern.map(id => idMap[id] || ''), newWeeks);
+  renderAdminRotaGrid(container);
 }
 
 async function wipeUserData(p){

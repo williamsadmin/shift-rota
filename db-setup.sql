@@ -63,6 +63,13 @@ drop policy if exists "Anyone can view shift_types" on public.shift_types;
 create policy "Anyone can view shift_types" on public.shift_types
   for select to authenticated using (true);
 
+-- Admins can create/edit shift types for any user (used by the admin rota editor
+-- when adding a template shift to someone who doesn't have it yet).
+drop policy if exists "Admins can manage any shift_types" on public.shift_types;
+create policy "Admins can manage any shift_types" on public.shift_types
+  for all using (owner_id = auth.uid() or public.is_admin())
+  with check (owner_id = auth.uid() or public.is_admin());
+
 -- ---------------------------------------------------------------------
 -- 4. Pinned / starred users
 -- ---------------------------------------------------------------------
