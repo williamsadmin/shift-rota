@@ -513,11 +513,34 @@
               <option value="10">10 weeks</option>
               <option value="11">11 weeks</option>
               <option value="12">12 weeks</option>
+              <option value="13">13 weeks</option>
+              <option value="14">14 weeks</option>
+              <option value="15">15 weeks</option>
+              <option value="16">16 weeks</option>
+              <option value="17">17 weeks</option>
+              <option value="18">18 weeks</option>
+              <option value="19">19 weeks</option>
+              <option value="20">20 weeks</option>
+              <option value="21">21 weeks</option>
+              <option value="22">22 weeks</option>
+              <option value="23">23 weeks</option>
+              <option value="24">24 weeks</option>
+              <option value="25">25 weeks</option>
+              <option value="26">26 weeks</option>
             </select>
           </div>
         </div>
         <p class="help" style="margin-top:0;margin-bottom:12px;">Pick a shift for each day — leave as "—" for a rest day. You'll line this pattern up with a real date in step 3.</p>
         <div id="pattern-grid"></div>
+        <details style="margin-top:14px;">
+          <summary style="cursor:pointer;color:var(--amber);font-size:13px;font-weight:600;">Import a whole rota from text</summary>
+          <p class="help" style="margin-top:8px;">Paste <strong>one line per week</strong>, with the seven days <strong>Sun → Sat</strong> separated by commas or tabs (tabs work if you copy from a spreadsheet). Each day is a shift code, optionally followed by its on/off times, e.g. <code>IB43 0737-1744</code>. Use <code>REST</code> or leave a gap for a day off.</p>
+          <textarea id="rota-import-text" placeholder="IB43 0737-1744, IB05 0510-1355, IB03 0410-1301, IB02 0355-1025, IB01 0310-1110, REST, REST
+REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-2138, IB32 1245-2103"></textarea>
+          <div class="checkbox-row" style="margin-top:8px;"><input type="checkbox" id="rota-import-create" checked><label for="rota-import-create">Create shift types for any codes I don't have yet (with their times)</label></div>
+          <button class="btn secondary full" type="button" onclick="importRotaFromText()" style="margin-top:4px;">Import into the grid above</button>
+          <div class="status" id="rota-import-status"></div>
+        </details>
       </section>
 
       <section>
@@ -1775,6 +1798,110 @@ function changeWeeks(){
   populateAnchorWeekSelect();
   recomputeRotaStartFromAnchor();
   renderGrid();
+}
+
+// ---------- Rota import (paste a full multi-week rota as text) ----------
+const IMPORT_MAX_WEEKS = 26;
+const IMPORT_PALETTE = ['#F2A93B','#43C6AC','#E2574C','#E08F4F','#6C8EBF','#9B7EDE','#3FA796','#D96BA0','#C9A227','#5FA8D3'];
+
+function importTimeToHHMM(t){
+  const digits = (t || '').replace(/[^0-9]/g, '');
+  let s = digits;
+  if(s.length === 3) s = '0' + s;
+  if(s.length !== 4) return '';
+  const h = s.slice(0,2), m = s.slice(2);
+  if(parseInt(h,10) > 23 || parseInt(m,10) > 59) return '';
+  return h + ':' + m;
+}
+
+function parseRotaCell(cell){
+  cell = (cell || '').trim();
+  if(!cell || /^(rest|off|r|x|-|—|0|0000)$/i.test(cell)) return { rest:true };
+  const tm = cell.match(/(\d{1,2}[:.]?\d{2})\s*(?:[-–—]|to)\s*(\d{1,2}[:.]?\d{2})/i);
+  let start = '', end = '', code = cell;
+  if(tm){
+    start = importTimeToHHMM(tm[1]);
+    end = importTimeToHHMM(tm[2]);
+    code = (cell.slice(0, tm.index) + cell.slice(tm.index + tm[0].length)).trim();
+  }
+  if(!code) code = cell.split(/\s+/)[0];
+  return { rest:false, code, start, end };
+}
+
+function splitRotaLine(line){
+  if(line.includes('\t')) return line.split('\t');
+  if(line.includes(',')) return line.split(',');
+  return line.split(/\s{2,}/);
+}
+
+async function importRotaFromText(){
+  const statusEl = document.getElementById('rota-import-status');
+  const raw = (document.getElementById('rota-import-text').value || '').trim();
+  const fail = (msg)=>{ statusEl.style.color = 'var(--danger)'; statusEl.textContent = msg; };
+  if(!raw){ return fail('Paste your rota first.'); }
+  const lines = raw.split(/\r?\n/).map(l => l.trim()).filter(l => l.length);
+  if(lines.length === 0){ return fail('No weeks found.'); }
+  if(lines.length > IMPORT_MAX_WEEKS){ return fail("That's " + lines.length + ' weeks — the maximum is ' + IMPORT_MAX_WEEKS + '.'); }
+
+  const grid = lines.map(splitRotaLine);
+  const badRow = grid.findIndex(r => r.length !== 7);
+  if(badRow !== -1){
+    return fail('Week ' + (badRow+1) + ' has ' + grid[badRow].length + ' days, not 7. Separate the seven days (Sun→Sat) with commas or tabs.');
+  }
+  const parsed = grid.map(r => r.map(parseRotaCell));
+
+  // Collect unique codes with their first-seen times
+  const codeInfo = {};
+  parsed.forEach(week => week.forEach(cell => {
+    if(cell.rest) return;
+    const key = cell.code.toUpperCase();
+    if(!codeInfo[key]) codeInfo[key] = { code: cell.code, start: cell.start, end: cell.end };
+    else if(!codeInfo[key].start && cell.start){ codeInfo[key].start = cell.start; codeInfo[key].end = cell.end; }
+  }));
+
+  const createMissing = document.getElementById('rota-import-create').checked;
+  const codeToId = {};
+  const unmatched = [];
+  let createdCount = 0;
+  for(const key of Object.keys(codeInfo)){
+    const info = codeInfo[key];
+    const existing = shiftTypes.find(s => (s.name || '').toUpperCase() === key);
+    if(existing){ codeToId[key] = existing.id; continue; }
+    if(!createMissing){ unmatched.push(info.code); continue; }
+    const hasTimes = !!(info.start && info.end);
+    const { data, error } = await sb.from('shift_types').insert({
+      owner_id: currentUser.id, is_template: false, name: info.code,
+      all_day: !hasTimes, start_time: hasTimes ? info.start : null, end_time: hasTimes ? info.end : null,
+      paid_hours: null, description: null, color: IMPORT_PALETTE[createdCount % IMPORT_PALETTE.length],
+      legs_data: null, allowed_days: null
+    }).select().single();
+    if(error){ return fail('Could not create shift "' + info.code + '": ' + error.message); }
+    if(data){ shiftTypes.push(data); codeToId[key] = data.id; createdCount++; }
+  }
+
+  // Build the pattern. Columns are Sun→Sat, so set the week to start on Sunday
+  // and each column maps straight to its weekday.
+  weekStartDay = 0;
+  weeks = parsed.length;
+  const newPattern = [];
+  parsed.forEach(week => week.forEach(cell => {
+    newPattern.push(cell.rest ? '' : (codeToId[cell.code.toUpperCase()] || ''));
+  }));
+  pattern = newPattern;
+
+  document.getElementById('weeks-select').value = String(weeks);
+  document.getElementById('week-start-day').value = '0';
+  populateAnchorWeekSelect();
+  renderShiftTypeList();
+  renderGrid();
+  renderOriginalGrid();
+
+  statusEl.style.color = 'var(--teal)';
+  let msg = 'Imported ' + weeks + ' week' + (weeks !== 1 ? 's' : '') + '.';
+  if(createdCount) msg += ' Created ' + createdCount + ' new shift type' + (createdCount !== 1 ? 's' : '') + '.';
+  if(unmatched.length) msg += ' No existing match for: ' + unmatched.join(', ') + ' (left blank).';
+  msg += ' Check the grid, set your anchor date in step 3, then press Save.';
+  statusEl.textContent = msg;
 }
 
 function togglePaySection(){
