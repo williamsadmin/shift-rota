@@ -2196,9 +2196,15 @@ async function extractPdfToImportBox(input){
         if(line) outLines.push(line);
       });
     }
-    document.getElementById('tpl-import-text').value = outLines.join('\n');
+    const text = outLines.join('\n');
+    document.getElementById('tpl-import-text').value = text;
+    if(!text.trim()){
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = 'No selectable text found in that PDF — it looks like a scan or photo (an image, not text). Type or paste the rota into the box below instead.';
+      return;
+    }
     statusEl.style.color = 'var(--amber)';
-    statusEl.textContent = 'Pulled the text out of the PDF. Check it reads as one week per line (Sun→Sat), tidy anything that\'s off, then press Import.';
+    statusEl.textContent = 'Pulled ' + outLines.length + ' line' + (outLines.length!==1?'s':'') + ' of text out of the PDF. Check it reads as one week per line (Sun→Sat), tidy anything that\'s off, then press Import.';
   }catch(e){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = 'Could not read that PDF — it may be a scan or photo (an image, not text). Paste the rota as text instead.';
