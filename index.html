@@ -194,7 +194,7 @@
         </div>
         <div style="margin-bottom:10px;">
           <label>Change to</label>
-          <input type="text" id="swap-shift-search" placeholder="Search shifts…" oninput="renderSwapShiftPicker()" autocomplete="off">
+          <input type="text" id="swap-shift-search" placeholder="Search shifts…" oninput="renderSwapShiftPicker()" onfocus="revealSwapPicker()" autocomplete="off">
         </div>
         <div id="swap-shift-picker" style="margin-bottom:10px;"></div>
         <input type="hidden" id="swap-to-shift" value="">
@@ -698,6 +698,7 @@ let isSignup = false;
 let allOverrides = []; // every override row for the current user, not just holidays
 let bankHolidays = new Set();
 let pendingSwap = null; // { fromDate, toDate, fromValue, toValue }
+let swapPickerRevealed = false; // Change-a-day picker stays hidden until the search is focused
 let profileCache = {}; // id -> profile, for display
 let allProfiles = []; // every other user's profile, for the People list
 let pinnedIds = new Set(); // ids of users I've starred
@@ -2335,6 +2336,7 @@ async function createSwapShift(){
   renderShiftTypeList(); renderGrid();
   document.getElementById('swap-to-shift').value = data.id; // select it for the change
   document.getElementById('swap-shift-search').value = '';
+  swapPickerRevealed = true;
   renderSwapShiftPicker();
   document.getElementById('swap-new-name').value='';
   document.getElementById('swap-new-start').value='';
@@ -2649,7 +2651,11 @@ function renderTentativeBanner(){
     div.className = 'off-item';
     const dateObj = new Date(o.override_date + 'T00:00:00');
     const formatted = dateObj.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short', year:'numeric'});
-    div.innerHTML = '<span>' + formatted + '</span>';
+    const shift = shiftTypes.find(s => s.id === o.value);
+    const shiftLabel = o.value === '' ? 'Rest day'
+      : o.value === '__holiday__' ? 'Holiday'
+      : (shift ? shift.name + shiftTimeLabel(shift) : 'shift');
+    div.innerHTML = '<span>' + escapeHtml(formatted) + ' — <strong style="color:var(--text);">' + escapeHtml(shiftLabel) + '</strong></span>';
     const btn = document.createElement('button');
     btn.textContent = 'Mark as confirmed';
     btn.style.color = 'var(--teal)';
@@ -2811,6 +2817,11 @@ function renderSwapShiftPicker(){
   const term = (document.getElementById('swap-shift-search')?.value || '').trim().toLowerCase();
   const current = document.getElementById('swap-to-shift')?.value || '';
 
+  if(!swapPickerRevealed && !term){
+    el.innerHTML = '<p class="empty" style="margin:0;font-size:12px;">Tap the box above and search to choose a shift.</p>';
+    return;
+  }
+
   const items = [{ id:'', name:'Rest day', color:'' }].concat(shiftTypes);
   const visible = term ? items.filter(s => s.name.toLowerCase().includes(term)) : items;
 
@@ -2834,7 +2845,13 @@ function renderSwapShiftPicker(){
   });
 }
 
+function revealSwapPicker(){
+  swapPickerRevealed = true;
+  renderSwapShiftPicker();
+}
+
 function selectSwapShift(id){
+  swapPickerRevealed = true;
   document.getElementById('swap-to-shift').value = id;
   renderSwapShiftPicker();
 }
@@ -2881,6 +2898,7 @@ async function finalizeSwap(choice){
   document.getElementById('swap-to-shift').value = '';
   const searchEl = document.getElementById('swap-shift-search');
   if(searchEl) searchEl.value = '';
+  swapPickerRevealed = false;
   renderSwapShiftPicker();
   pendingSwap = null;
   const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
