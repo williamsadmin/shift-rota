@@ -1244,15 +1244,12 @@ function formatDuration(mins){
   return h + ':' + String(m).padStart(2,'0');
 }
 
-function compileDutyBoard(prefix){
-  const legs = legBuilders[prefix].filter(l => l.start && l.end);
-  const summaryEl = document.getElementById(prefix + '-leg-summary');
-  const hiddenEl = document.getElementById(prefix + '-desc');
-  if(legs.length === 0){
-    summaryEl.textContent = 'No legs added yet.';
-    hiddenEl.value = '';
-    return;
-  }
+// Pure builder: turns a legs array into the formatted duty-board lines.
+// A gap of 30+ minutes is a break — shown as a dashed line with its start/end,
+// total, and "BREAK", and it resets continuous driving toward the GB break rule.
+function buildDutyBoardLines(legsInput){
+  const legs = (legsInput || []).filter(l => l && l.start && l.end);
+  if(legs.length === 0) return [];
 
   // Build an absolute timeline so we can detect overnight wraps and gaps correctly.
   let prevAbs = null;
@@ -1271,6 +1268,7 @@ function compileDutyBoard(prefix){
   const CONTINUOUS_LIMIT = 330;  // 5h30m in minutes
   let continuousDriving = 0;
   let breakViolation = false;
+  let totalBreakMinutes = 0;
 
   for(let i=0; i<timed.length; i++){
     const leg = timed[i];
@@ -1289,11 +1287,15 @@ function compileDutyBoard(prefix){
 
     if(i < timed.length - 1){
       const gap = timed[i+1].startAbs - leg.endAbs;
-      if(gap > 0){
-        lines.push('Gap (' + formatDuration(gap) + ')');
-      }
       if(gap >= BREAK_THRESHOLD){
-        continuousDriving = 0;
+        // A qualifying break — dashed line with times + total + BREAK.
+        lines.push('---------- ' + formatClock(leg.endAbs) + '–' + formatClock(timed[i+1].startAbs)
+          + ' (' + formatDuration(gap) + ') BREAK ----------');
+        lines.push('');
+        continuousDriving = 0; // counts toward the GB driving-hours break
+        totalBreakMinutes += gap;
+      } else if(gap > 0){
+        lines.push('Gap (' + formatDuration(gap) + ')');
       }
     }
   }
@@ -1304,6 +1306,7 @@ function compileDutyBoard(prefix){
   lines.push('----------');
   lines.push('');
   lines.push('Total drive time: ' + formatDuration(totalLegMinutes));
+  if(totalBreakMinutes > 0) lines.push('Total break time: ' + formatDuration(totalBreakMinutes));
   lines.push('Total span: ' + formatDuration(span));
 
   // Second separator before compliance section
@@ -1327,16 +1330,44 @@ function compileDutyBoard(prefix){
     lines.push('✅ Within GB domestic hours limits');
   }
 
-  const compiled = lines.join('\n');
-  hiddenEl.value = compiled;
+  return lines;
+}
+
+function compileDutyBoard(prefix){
+  const summaryEl = document.getElementById(prefix + '-leg-summary');
+  const hiddenEl = document.getElementById(prefix + '-desc');
+  const lines = buildDutyBoardLines(legBuilders[prefix]);
+  if(lines.length === 0){
+    summaryEl.textContent = 'No legs added yet.';
+    hiddenEl.value = '';
+    return;
+  }
+  hiddenEl.value = lines.join('\n');
 
   // Re-render summary with highlighted lines
   summaryEl.innerHTML = lines.map(l => {
     if(l.startsWith('⚠️')) return '<span class="warn-line">' + escapeHtml(l) + '</span>';
     if(l.startsWith('✅')) return '<span class="pass-line">' + escapeHtml(l) + '</span>';
-    if(l.startsWith('Gap (')) return '<span class="gap-line">' + escapeHtml(l) + '</span>';
+    if(l.includes('BREAK') || l.startsWith('Gap (')) return '<span class="gap-line">' + escapeHtml(l) + '</span>';
     return escapeHtml(l);
   }).join('\n');
+}
+
+// Recompute stored duty-board descriptions so already-created/imported shifts pick
+// up the new break formatting. Only writes rows whose text actually changed.
+async function recompileDutyBoards(){
+  const process = async (rows)=>{
+    for(const s of rows){
+      if(!Array.isArray(s.legs_data) || s.legs_data.length === 0) continue;
+      const newDesc = buildDutyBoardLines(s.legs_data).join('\n');
+      if(newDesc && newDesc !== (s.description || '')){
+        const { error } = await sb.from('shift_types').update({ description: newDesc }).eq('id', s.id);
+        if(!error) s.description = newDesc;
+      }
+    }
+  };
+  await process(shiftTypes);
+  if(isAdmin) await process(templates);
 }
 
 /* ---------- PDF duty sheet import ---------- */
@@ -1809,6 +1840,7 @@ async function loadAccountData(){
 
   // Auto-sync unmodified user copies with any template changes (runs client-side on load)
   await syncTemplateCopies();
+  await recompileDutyBoards();
 
   await loadShareLink();
   renderShiftTypeList();
