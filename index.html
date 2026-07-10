@@ -3625,15 +3625,23 @@ async function loadAdminUserRota(userId, container, btn){
   btn.style.display = 'none';
   const r = rotaRes.data;
   const w = (r && r.weeks) || 5;
+  const base = {
+    rota_start: (r && r.rota_start) || '',
+    weeks: w,
+    week_start_day: (r && r.week_start_day != null) ? r.week_start_day : 0,
+    pattern: resizePatternArray((r && r.original_pattern) || [], w)
+  };
   adminEditRota = {
     userId,
     weeks: w,
-    weekStartDay: (r && r.week_start_day != null) ? r.week_start_day : 0,
-    rotaStart: (r && r.rota_start) || '',
-    anchorDate: (r && r.rota_start) || '', // stored rota_start is Week 1 by definition
+    weekStartDay: base.week_start_day,
+    rotaStart: base.rota_start,
+    anchorDate: base.rota_start, // stored rota_start is Week 1 by definition
     anchorWeek: 1,
-    pattern: resizePatternArray((r && r.original_pattern) || [], w),
-    shiftTypes: stRes.data || []
+    pattern: [...base.pattern],
+    shiftTypes: stRes.data || [],
+    base: base,                                                    // the user's current rota (preserved when scheduling)
+    schedule: Array.isArray(r && r.schedule) ? r.schedule : []     // their existing scheduled changes
   };
   renderAdminRotaGrid(container);
 }
@@ -3802,24 +3810,73 @@ function renderAdminRotaGrid(container){
 
   const saveStatus = document.createElement('div');
   saveStatus.className = 'status';
-  const saveBtn = document.createElement('button');
-  saveBtn.className = 'btn full'; saveBtn.textContent = 'Save rota';
-  saveBtn.onclick = async ()=>{
-    saveBtn.textContent='Saving…'; saveBtn.disabled=true;
-    const { error } = await sb.from('rota_settings').upsert({
-      user_id: ar.userId,
-      rota_start: ar.rotaStart || null,
-      weeks: ar.weeks,
-      week_start_day: ar.weekStartDay,
-      original_pattern: ar.pattern,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'user_id' });
-    saveBtn.textContent='Save rota'; saveBtn.disabled=false;
-    if(error){ saveStatus.style.color='var(--danger)'; saveStatus.textContent=error.message; }
-    else { saveStatus.style.color='var(--teal)'; saveStatus.textContent='Rota saved.'; }
+
+  const schedBtn = document.createElement('button');
+  schedBtn.className = 'btn full';
+  schedBtn.textContent = 'Start this rota from the anchor date (keep current rota before)';
+  schedBtn.style.whiteSpace = 'normal';
+  schedBtn.onclick = async ()=>{ schedBtn.disabled=true; await adminScheduleRota(saveStatus); schedBtn.disabled=false; };
+
+  const replaceBtn = document.createElement('button');
+  replaceBtn.className = 'btn secondary full';
+  replaceBtn.style.marginTop = '8px';
+  replaceBtn.textContent = 'Replace their whole rota instead';
+  replaceBtn.onclick = async ()=>{
+    if(!confirm('Replace this user\'s entire rota with the pattern above? Their current rota is overwritten from the start (booked holidays and swaps stay).')) return;
+    replaceBtn.disabled=true; await adminReplaceRota(saveStatus); replaceBtn.disabled=false;
   };
-  container.appendChild(saveBtn);
+
+  const note = document.createElement('p');
+  note.className = 'help'; note.style.marginTop = '6px';
+  note.textContent = 'Scheduling keeps every day before the anchor date exactly as it is now; only days from that date use the new rota. Booked holidays and swaps are always kept.';
+
+  container.appendChild(schedBtn);
+  container.appendChild(replaceBtn);
+  container.appendChild(note);
   container.appendChild(saveStatus);
+}
+
+async function adminPersistRota(baseObj, schedule, saveStatus, successMsg){
+  const ar = adminEditRota;
+  saveStatus.style.color = 'var(--text-dim)'; saveStatus.textContent = 'Saving…';
+  const payload = {
+    user_id: ar.userId,
+    rota_start: baseObj.rota_start || null,
+    weeks: baseObj.weeks,
+    week_start_day: baseObj.week_start_day,
+    original_pattern: baseObj.pattern,
+    updated_at: new Date().toISOString()
+  };
+  if(schedule && schedule.length) payload.schedule = schedule;
+  const { error } = await sb.from('rota_settings').upsert(payload, { onConflict: 'user_id' });
+  if(error){
+    saveStatus.style.color = 'var(--danger)';
+    saveStatus.textContent = /schedule/i.test(error.message)
+      ? 'Scheduled changes need the one-off DB update: alter table public.rota_settings add column if not exists schedule jsonb;'
+      : error.message;
+    return false;
+  }
+  saveStatus.style.color = 'var(--teal)'; saveStatus.textContent = successMsg;
+  return true;
+}
+
+async function adminScheduleRota(saveStatus){
+  const ar = adminEditRota;
+  if(!ar.anchorDate){ saveStatus.style.color='var(--danger)'; saveStatus.textContent='Set the anchor date above — that\'s the date the new rota starts.'; return; }
+  const todayKey = dateKeyLocal(new Date());
+  if(ar.anchorDate <= todayKey && !confirm('The new rota starts from ' + fmtDateLabel(ar.anchorDate) + ', which isn\'t in the future — days from then will use the new rota. Continue?')) return;
+  const entry = { effective_from: ar.anchorDate, rota_start: ar.rotaStart, weeks: ar.weeks, week_start_day: ar.weekStartDay, pattern: [...ar.pattern] };
+  ar.schedule = ar.schedule.filter(s => s.effective_from !== ar.anchorDate).concat([entry]);
+  const ok = await adminPersistRota(ar.base, ar.schedule, saveStatus,
+    'Saved — the new rota starts ' + fmtDateLabel(ar.anchorDate) + '; the current rota is kept before then.');
+  if(!ok) return;
+}
+
+async function adminReplaceRota(saveStatus){
+  const ar = adminEditRota;
+  const newBase = { rota_start: ar.rotaStart || '', weeks: ar.weeks, week_start_day: ar.weekStartDay, pattern: [...ar.pattern] };
+  const ok = await adminPersistRota(newBase, ar.schedule, saveStatus, 'Rota replaced.');
+  if(ok) ar.base = newBase;
 }
 
 // Give the edited user a personal copy of a shared shift template (if they don't
