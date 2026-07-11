@@ -42,6 +42,14 @@ create policy "Admins can update any profile" on public.profiles
 create unique index if not exists profiles_username_lower_key
   on public.profiles (lower(username)) where username is not null;
 
+-- Company / location grouping. `pending_*` hold a user's join request until an
+-- admin approves it (moving it into company/location). Users update their own
+-- pending fields; admins (via the existing update-any policy) approve/edit.
+alter table public.profiles add column if not exists company text;
+alter table public.profiles add column if not exists location text;
+alter table public.profiles add column if not exists pending_company text;
+alter table public.profiles add column if not exists pending_location text;
+
 -- ---------------------------------------------------------------------
 -- 3. Rotas — any logged-in user can view anyone's rota (People tab).
 --    Writes stay restricted to the owner, plus admins can manage any rota.

@@ -295,10 +295,30 @@
         <p class="sub">Browse everyone on Shift Rota, view their rota, and star the people you check most so they stay at the top.</p>
       </header>
 
+      <section id="workplace-section">
+        <p class="sec-title">Your workplace</p>
+        <div id="workplace-body"></div>
+      </section>
+
+      <section id="admin-requests-section" style="display:none;">
+        <p class="sec-title" style="color:var(--amber);">Requests to join</p>
+        <div id="admin-requests-list"></div>
+      </section>
+
       <section>
         <p class="sec-title">Find people</p>
         <div class="row">
           <div><input type="text" id="people-search-input" placeholder="Search by username or name" oninput="renderPeopleList()"></div>
+        </div>
+        <div class="row" id="people-filter-row">
+          <div id="company-filter-wrap" style="max-width:200px;display:none;">
+            <label>Company</label>
+            <select id="company-filter"><option value="__all__">All companies</option></select>
+          </div>
+          <div style="max-width:200px;">
+            <label>Location</label>
+            <select id="location-filter" onchange="renderPeopleList()"><option value="__all__">All locations</option></select>
+          </div>
         </div>
         <div class="status" id="people-load-status"></div>
         <div id="people-list" style="margin-top:12px;"></div>
@@ -742,6 +762,8 @@ let swapPickerRevealed = false; // Change-a-day picker stays hidden until the se
 let profileCache = {}; // id -> profile, for display
 let allProfiles = []; // every other user's profile, for the People list
 let pinnedIds = new Set(); // ids of users I've starred
+let myCompany = null, myLocation = null;             // the current user's approved workplace
+let myPendingCompany = null, myPendingLocation = null; // their outstanding join request
 let selectedFriend = null; // profile of the person currently being viewed
 let friendData = { rota: null, overrides: [], shiftTypes: [] };
 let selectedFriend2 = null; // optional third person in the compare view
@@ -761,36 +783,169 @@ function friendLabel(p){
 async function loadPeopleTab(){
   const statusEl = document.getElementById('people-load-status');
   if(statusEl){ statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Loading people…'; }
-  const [profRes, pinRes] = await Promise.all([
-    sb.from('profiles').select('id,email,display_name,username').order('username'),
-    sb.from('pinned_users').select('pinned_id').eq('user_id', currentUser.id)
-  ]);
+  let profRes = await sb.from('profiles')
+    .select('id,email,display_name,username,company,location,pending_company,pending_location').order('username');
+  if(profRes.error && /column|company|location|pending/i.test(profRes.error.message || '')){
+    // company/location columns not added yet — fall back so People still works
+    profRes = await sb.from('profiles').select('id,email,display_name,username').order('username');
+  }
+  const pinRes = await sb.from('pinned_users').select('pinned_id').eq('user_id', currentUser.id);
   if(profRes.error){
     if(statusEl){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Could not load people: ' + profRes.error.message; }
     return;
   }
-  allProfiles = (profRes.data || []).filter(p => p.id !== currentUser.id);
+  const all = profRes.data || [];
+  const me = all.find(p => p.id === currentUser.id) || {};
+  myCompany = me.company || null;
+  myLocation = me.location || null;
+  myPendingCompany = me.pending_company || null;
+  myPendingLocation = me.pending_location || null;
+  allProfiles = all.filter(p => p.id !== currentUser.id);
   allProfiles.forEach(p => profileCache[p.id] = p);
   pinnedIds = new Set(((pinRes && pinRes.data) || []).map(r => r.pinned_id));
   if(statusEl) statusEl.textContent = '';
+  renderWorkplaceBlock();
+  renderAdminRequests();
+  populatePeopleFilters();
   renderPeopleList();
+}
+
+function workplaceFormHTML(){
+  return '<div class="row"><div><label>Company</label><input type="text" id="wp-company" placeholder="e.g. trentbarton" value="' + escapeHtml(myPendingCompany || myCompany || '') + '"></div>'
+    + '<div><label>Location</label><input type="text" id="wp-location" placeholder="e.g. Derby" value="' + escapeHtml(myPendingLocation || myLocation || '') + '"></div></div>'
+    + '<button class="btn secondary" onclick="requestWorkplace()">' + (isAdmin ? 'Set my company/location' : 'Request to join') + '</button>';
+}
+function showWorkplaceForm(){ document.getElementById('workplace-form').innerHTML = workplaceFormHTML(); }
+
+function renderWorkplaceBlock(){
+  const el = document.getElementById('workplace-body');
+  if(!el) return;
+  if(myCompany){
+    el.innerHTML = '<p class="help" style="margin-top:0;">You\'re in <strong style="color:var(--text);">' + escapeHtml(myCompany) + '</strong>'
+      + (myLocation ? ' · ' + escapeHtml(myLocation) : '') + '. You can see people in your company'
+      + (isAdmin ? '. As an admin you can see and filter everyone.' : ' and filter by location.') + '</p>'
+      + '<button class="btn secondary" style="font-size:12px;padding:6px 10px;" onclick="showWorkplaceForm()">Change company / location</button>'
+      + '<div id="workplace-form"></div><div class="status" id="workplace-status"></div>';
+  } else if(myPendingCompany){
+    el.innerHTML = '<p class="help" style="margin-top:0;">Requested <strong style="color:var(--text);">' + escapeHtml(myPendingCompany)
+      + (myPendingLocation ? ' · ' + escapeHtml(myPendingLocation) : '') + '</strong> — waiting for an admin to approve. You\'re in <em>New Users</em> until then.</p>'
+      + '<button class="btn secondary" style="font-size:12px;padding:6px 10px;" onclick="cancelWorkplaceRequest()">Cancel request</button>'
+      + '<div class="status" id="workplace-status"></div>';
+  } else {
+    el.innerHTML = '<p class="help" style="margin-top:0;">You\'re in <em>New Users</em>. Request to join your company and location so you can see your colleagues.</p>'
+      + workplaceFormHTML() + '<div class="status" id="workplace-status"></div>';
+  }
+}
+
+async function requestWorkplace(){
+  const company = document.getElementById('wp-company').value.trim();
+  const location = document.getElementById('wp-location').value.trim();
+  const statusEl = document.getElementById('workplace-status');
+  if(!company){ statusEl.style.color='var(--danger)'; statusEl.textContent='Enter a company.'; return; }
+  statusEl.style.color='var(--text-dim)'; statusEl.textContent='Saving…';
+  // Admins set their workplace directly; others create a request for approval.
+  const payload = isAdmin
+    ? { company, location: location || null, pending_company: null, pending_location: null }
+    : { pending_company: company, pending_location: location || null };
+  const { error } = await sb.from('profiles').update(payload).eq('id', currentUser.id);
+  if(error){
+    statusEl.style.color='var(--danger)';
+    statusEl.textContent = /column|pending|company|location/i.test(error.message)
+      ? 'Needs a one-off DB update — run the company/location block from db-setup.sql.'
+      : error.message;
+    return;
+  }
+  await loadPeopleTab();
+}
+
+async function cancelWorkplaceRequest(){
+  await sb.from('profiles').update({ pending_company: null, pending_location: null }).eq('id', currentUser.id);
+  await loadPeopleTab();
+}
+
+function renderAdminRequests(){
+  const section = document.getElementById('admin-requests-section');
+  const list = document.getElementById('admin-requests-list');
+  if(!section || !list) return;
+  const pending = isAdmin ? allProfiles.filter(p => p.pending_company) : [];
+  if(pending.length === 0){ section.style.display = 'none'; return; }
+  section.style.display = 'block';
+  list.innerHTML = '';
+  pending.forEach(p=>{
+    const div = document.createElement('div'); div.className = 'off-item';
+    div.innerHTML = '<span>' + escapeHtml(friendLabel(p)) + ' → <strong style="color:var(--text);">'
+      + escapeHtml(p.pending_company) + (p.pending_location ? ' · ' + escapeHtml(p.pending_location) : '') + '</strong></span>';
+    const grp = document.createElement('span'); grp.style.display='flex'; grp.style.gap='10px';
+    const ok = document.createElement('button'); ok.textContent='Approve'; ok.style.color='var(--teal)'; ok.onclick=()=>approveRequest(p);
+    const no = document.createElement('button'); no.textContent='Dismiss'; no.style.color='var(--danger)'; no.onclick=()=>dismissRequest(p);
+    grp.appendChild(ok); grp.appendChild(no); div.appendChild(grp); list.appendChild(div);
+  });
+}
+
+async function approveRequest(p){
+  const { error } = await sb.from('profiles').update({ company: p.pending_company, location: p.pending_location, pending_company: null, pending_location: null }).eq('id', p.id);
+  if(error){ alert(error.message); return; }
+  await loadPeopleTab();
+}
+async function dismissRequest(p){
+  await sb.from('profiles').update({ pending_company: null, pending_location: null }).eq('id', p.id);
+  await loadPeopleTab();
+}
+
+function populatePeopleFilters(){
+  const compWrap = document.getElementById('company-filter-wrap');
+  const compSel = document.getElementById('company-filter');
+  if(compWrap) compWrap.style.display = isAdmin ? 'block' : 'none';
+  if(isAdmin && compSel){
+    const companies = [...new Set(allProfiles.map(p => p.company).filter(Boolean))].sort();
+    const prev = compSel.value || '__all__';
+    compSel.innerHTML = '<option value="__all__">All companies</option>'
+      + '<option value="__new__">New Users (no company)</option>'
+      + companies.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
+    compSel.value = [...compSel.options].some(o => o.value === prev) ? prev : '__all__';
+    compSel.onchange = ()=>{ populateLocationFilter(); renderPeopleList(); };
+  }
+  populateLocationFilter();
+}
+
+function scopedPool(){
+  // The set of people this viewer is allowed to see, before search/location filters.
+  if(isAdmin){
+    const comp = (document.getElementById('company-filter') || {}).value || '__all__';
+    if(comp === '__new__') return allProfiles.filter(p => !p.company);
+    if(comp !== '__all__') return allProfiles.filter(p => p.company === comp);
+    return allProfiles;
+  }
+  return allProfiles.filter(p => p.company && p.company === myCompany);
+}
+
+function populateLocationFilter(){
+  const locSel = document.getElementById('location-filter');
+  if(!locSel) return;
+  const locs = [...new Set(scopedPool().map(p => p.location).filter(Boolean))].sort();
+  const prev = locSel.value || '__all__';
+  locSel.innerHTML = '<option value="__all__">All locations</option>'
+    + locs.map(l => '<option value="' + escapeHtml(l) + '">' + escapeHtml(l) + '</option>').join('');
+  locSel.value = [...locSel.options].some(o => o.value === prev) ? prev : '__all__';
 }
 
 function renderPeopleList(){
   const el = document.getElementById('people-list');
   if(!el) return;
+  if(!isAdmin && !myCompany){
+    el.innerHTML = '<p class="empty">Join a company above to see your colleagues.</p>';
+    return;
+  }
   const term = (document.getElementById('people-search-input').value || '').trim().toLowerCase();
+  const locFilter = (document.getElementById('location-filter') || {}).value || '__all__';
+  let pool = scopedPool();
+  if(locFilter !== '__all__') pool = pool.filter(p => p.location === locFilter);
   const matches = p => !term
     || (p.username || '').toLowerCase().includes(term)
     || (p.display_name || '').toLowerCase().includes(term)
     || (p.email || '').toLowerCase().includes(term);
-  const visible = allProfiles.filter(matches);
-  if(visible.length === 0){
-    el.innerHTML = '<p class="empty">' + (allProfiles.length === 0
-      ? 'No one else has signed up yet.'
-      : 'No one matches that search.') + '</p>';
-    return;
-  }
+  const visible = pool.filter(matches);
+  if(visible.length === 0){ el.innerHTML = '<p class="empty">No one matches.</p>'; return; }
   const pinned = visible.filter(p => pinnedIds.has(p.id));
   const others = visible.filter(p => !pinnedIds.has(p.id));
   el.innerHTML = '';
@@ -821,6 +976,14 @@ function personRow(p){
   name.className = 'name-text';
   name.textContent = friendLabel(p);
   left.appendChild(star); left.appendChild(name);
+  // Show location (and company for admins) as a muted tag
+  const meta = [isAdmin ? p.company : null, p.location].filter(Boolean).join(' · ');
+  if(meta){
+    const tag = document.createElement('span');
+    tag.style.cssText = 'color:var(--text-dim);font-size:11px;margin-left:8px;white-space:nowrap;';
+    tag.textContent = meta;
+    left.appendChild(tag);
+  }
   div.appendChild(left);
   const btn = document.createElement('button');
   btn.textContent = 'View rota';
@@ -891,7 +1054,8 @@ async function selectFriend(profile){
 function populateThirdPersonSelect(){
   const sel = document.getElementById('third-person-select');
   if(!sel) return;
-  const others = allProfiles.filter(p => !selectedFriend || p.id !== selectedFriend.id);
+  const base = isAdmin ? allProfiles : allProfiles.filter(p => p.company && p.company === myCompany);
+  const others = base.filter(p => !selectedFriend || p.id !== selectedFriend.id);
   sel.innerHTML = '<option value="">— None —</option>' +
     others.map(p => '<option value="' + p.id + '">' + escapeHtml(friendLabel(p)) + '</option>').join('');
   sel.value = selectedFriend2 ? selectedFriend2.id : '';
@@ -3627,7 +3791,10 @@ function renderRotaTemplateList(){
 async function loadAdminTab(){
   const statusEl = document.getElementById('admin-load-status');
   statusEl.style.color='var(--text-dim)'; statusEl.textContent='Loading accounts…';
-  const { data, error } = await sb.from('profiles').select('id,email,username,is_admin').order('email');
+  let { data, error } = await sb.from('profiles').select('id,email,username,is_admin,company,location,pending_company,pending_location').order('email');
+  if(error && /column|company|location|pending/i.test(error.message || '')){
+    ({ data, error } = await sb.from('profiles').select('id,email,username,is_admin').order('email'));
+  }
   if(error){
     statusEl.style.color='var(--danger)';
     statusEl.textContent='Could not load accounts. You may need to add an RLS policy to the profiles table: allow admins to select all rows.';
@@ -3703,16 +3870,25 @@ function showAdminEditProfile(p, parentDiv){
   row1.style.display='flex'; row1.style.gap='8px'; row1.style.alignItems='center';
   row1.appendChild(usernameInput); row1.appendChild(adminLabel);
 
+  const companyInput = document.createElement('input');
+  companyInput.type='text'; companyInput.placeholder='Company'; companyInput.value = p.company || ''; companyInput.style.flex='1';
+  const locationInput = document.createElement('input');
+  locationInput.type='text'; locationInput.placeholder='Location'; locationInput.value = p.location || ''; locationInput.style.flex='1';
+  const rowCL = document.createElement('div');
+  rowCL.style.display='flex'; rowCL.style.gap='8px';
+  rowCL.appendChild(companyInput); rowCL.appendChild(locationInput);
+
   const row2 = document.createElement('div');
   row2.style.display='flex'; row2.style.gap='8px';
   row2.appendChild(saveBtn); row2.appendChild(cancelBtn);
 
   const info = document.createElement('span');
   info.style.color='var(--text-dim)'; info.style.fontSize='12px';
-  info.textContent = p.email || '(no email)';
+  info.textContent = (p.email || '(no email)') + (p.pending_company ? '  ·  requested: ' + p.pending_company + (p.pending_location ? ' / ' + p.pending_location : '') : '');
 
   parentDiv.appendChild(info);
   parentDiv.appendChild(row1);
+  parentDiv.appendChild(rowCL);
   parentDiv.appendChild(row2);
 
   // Rota section
@@ -3735,10 +3911,14 @@ function showAdminEditProfile(p, parentDiv){
   saveBtn.onclick = async ()=>{
     const newUsername = usernameInput.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
     const newAdmin = adminCheck.checked;
+    const newCompany = companyInput.value.trim() || null;
+    const newLocation = locationInput.value.trim() || null;
     saveBtn.textContent = 'Saving…'; saveBtn.disabled=true;
-    const { error } = await sb.from('profiles').update({ username: newUsername||null, is_admin: newAdmin }).eq('id', p.id);
+    // Setting a company/location directly clears any pending request for it.
+    const patch = { username: newUsername||null, is_admin: newAdmin, company: newCompany, location: newLocation, pending_company: null, pending_location: null };
+    const { error } = await sb.from('profiles').update(patch).eq('id', p.id);
     if(error){ alert('Error: ' + error.message); saveBtn.textContent='Save'; saveBtn.disabled=false; return; }
-    allAdminProfiles = allAdminProfiles.map(x => x.id===p.id ? { ...x, username:newUsername, is_admin:newAdmin } : x);
+    allAdminProfiles = allAdminProfiles.map(x => x.id===p.id ? { ...x, username:newUsername, is_admin:newAdmin, company:newCompany, location:newLocation, pending_company:null, pending_location:null } : x);
     renderAdminAccountList();
   };
 }
