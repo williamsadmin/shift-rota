@@ -319,6 +319,12 @@
               <option value="1">1 month</option>
             </select>
           </div>
+          <div style="max-width:220px;">
+            <label>Add a third person</label>
+            <select id="third-person-select" onchange="selectThirdPerson(this.value)">
+              <option value="">— None —</option>
+            </select>
+          </div>
         </div>
         <div id="friend-calendar-list"></div>
         <div class="leg-summary" id="friend-day-detail-panel" style="display:none;margin-top:14px;"></div>
@@ -738,6 +744,8 @@ let allProfiles = []; // every other user's profile, for the People list
 let pinnedIds = new Set(); // ids of users I've starred
 let selectedFriend = null; // profile of the person currently being viewed
 let friendData = { rota: null, overrides: [], shiftTypes: [] };
+let selectedFriend2 = null; // optional third person in the compare view
+let friendData2 = { rota: null, overrides: [], shiftTypes: [] };
 let allAdminProfiles = []; // loaded once per admin session for account management
 let adminEditRota = null; // { userId, weeks, weekStartDay, rotaStart, pattern, shiftTypes }
 // Rota template builder state (admin only)
@@ -873,8 +881,40 @@ async function selectFriend(profile){
     overrides: ovRes.data || [],
     shiftTypes: stRes.data || []
   };
+  selectedFriend2 = null;
+  friendData2 = { rota: null, overrides: [], shiftTypes: [] };
+  populateThirdPersonSelect();
   renderFriendCalendar();
   document.getElementById('friend-detail-section').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function populateThirdPersonSelect(){
+  const sel = document.getElementById('third-person-select');
+  if(!sel) return;
+  const others = allProfiles.filter(p => !selectedFriend || p.id !== selectedFriend.id);
+  sel.innerHTML = '<option value="">— None —</option>' +
+    others.map(p => '<option value="' + p.id + '">' + escapeHtml(friendLabel(p)) + '</option>').join('');
+  sel.value = selectedFriend2 ? selectedFriend2.id : '';
+}
+
+async function selectThirdPerson(id){
+  if(!id){
+    selectedFriend2 = null;
+    friendData2 = { rota: null, overrides: [], shiftTypes: [] };
+    renderFriendCalendar();
+    return;
+  }
+  const p = allProfiles.find(x => x.id === id) || profileCache[id];
+  if(!p) return;
+  selectedFriend2 = p;
+  const [rotaRes, ovRes, stRes] = await Promise.all([
+    sb.from('rota_settings').select('*').eq('user_id', p.id).maybeSingle(),
+    sb.from('overrides').select('*').eq('user_id', p.id),
+    sb.from('shift_types').select('*').eq('owner_id', p.id)
+  ]);
+  friendData2 = { rota: rotaRes.data || null, overrides: ovRes.data || [], shiftTypes: stRes.data || [] };
+  document.getElementById('friend-compare-toggle').checked = true; // third column only shows in compare mode
+  renderFriendCalendar();
 }
 
 function computeEffectiveShift(rotaObj, overridesArr, dateStr){
@@ -925,27 +965,36 @@ function renderFriendCalendar(){
       const myShiftId = computeEffectiveShift(myRota, allOverrides, key);
       const myShift = shiftTypes.find(s => s.id === myShiftId);
       const myWorking = !!myShiftId && myShiftId !== '__holiday__';
-      if(myWorking && friendWorking){
-        row.style.background = 'rgba(226,87,76,0.18)';
-        row.style.borderColor = 'var(--danger)';
-      } else if(!myWorking && !friendWorking){
-        row.style.background = 'rgba(67,198,172,0.18)';
-        row.style.borderColor = 'var(--teal)';
-      } else if(myWorking && !friendWorking){
-        row.style.background = 'rgba(224,143,79,0.18)';
-        row.style.borderColor = '#E08F4F';
+
+      const people = [
+        { label: 'You', shift: myShift, shiftId: myShiftId, working: myWorking },
+        { label: friendLabel(selectedFriend), shift: friendShift, shiftId: friendShiftId, working: friendWorking }
+      ];
+      if(selectedFriend2 && friendData2.rota){
+        const p2Id = computeEffectiveShift(friendData2.rota, friendData2.overrides, key);
+        const p2Shift = friendData2.shiftTypes.find(s => s.id === p2Id);
+        people.push({ label: friendLabel(selectedFriend2), shift: p2Shift, shiftId: p2Id, working: !!p2Id && p2Id !== '__holiday__' });
+      }
+
+      const workingCount = people.filter(p => p.working).length;
+      if(people.length === 2){
+        const a = people[0].working, b = people[1].working;
+        if(a && b){ row.style.background='rgba(226,87,76,0.18)'; row.style.borderColor='var(--danger)'; }
+        else if(!a && !b){ row.style.background='rgba(67,198,172,0.18)'; row.style.borderColor='var(--teal)'; }
+        else if(a && !b){ row.style.background='rgba(224,143,79,0.18)'; row.style.borderColor='#E08F4F'; }
+        else { row.style.background='rgba(242,169,59,0.18)'; row.style.borderColor='var(--amber)'; }
+      } else if(workingCount === people.length){
+        row.style.background='rgba(226,87,76,0.18)'; row.style.borderColor='var(--danger)'; // all working
+      } else if(workingCount === 0){
+        row.style.background='rgba(67,198,172,0.18)'; row.style.borderColor='var(--teal)'; // all off
       } else {
-        row.style.background = 'rgba(242,169,59,0.18)';
-        row.style.borderColor = 'var(--amber)';
+        row.style.background='rgba(242,169,59,0.18)'; row.style.borderColor='var(--amber)'; // mixed
       }
       row.style.display = 'block';
       row.innerHTML =
         '<div class="cmp-date">' + escapeHtml(dateLabel) + '</div>' +
-        '<div class="cmp-cols">' +
-          compareShiftCell('You', myShiftId, myShift) +
-          compareShiftCell(friendLabel(selectedFriend), friendShiftId, friendShift) +
-        '</div>';
-      row.onclick = ()=>showCompareDayDetail(key, myShift, myShiftId, friendShift, friendShiftId);
+        '<div class="cmp-cols">' + people.map(p => compareShiftCell(p.label, p.shiftId, p.shift)).join('') + '</div>';
+      row.onclick = ()=>showCompareDayDetailMulti(key, people);
     } else {
       let label = dateLabel + ' — ';
       if(friendShiftId === '__holiday__') label += 'Holiday';
@@ -1140,13 +1189,13 @@ function showFriendDayDetail(dateStr, shift, shiftId){
   panel.scrollIntoView({behavior:'smooth', block:'center'});
 }
 
-function showCompareDayDetail(dateStr, myShift, myShiftId, friendShift, friendShiftId){
+function showCompareDayDetailMulti(dateStr, people){
   const panel = document.getElementById('friend-day-detail-panel');
   if(!panel) return;
-  panel.innerHTML =
-    buildDayDetailHTML(dateStr, myShift, myShiftId, 'You — ') +
-    '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0;">' +
-    buildDayDetailHTML(dateStr, friendShift, friendShiftId, friendLabel(selectedFriend) + "'s — ") +
+  panel.innerHTML = people.map((p, i) =>
+    (i > 0 ? '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0;">' : '') +
+    buildDayDetailHTML(dateStr, p.shift, p.shiftId, p.label + ' — ')
+  ).join('') +
     '<button class="btn secondary full" style="margin-top:10px;" onclick="closeFriendDayDetail()">Close</button>';
   panel.style.display = 'block';
   panel.scrollIntoView({behavior:'smooth', block:'center'});
