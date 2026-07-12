@@ -770,6 +770,7 @@ let selectedFriend2 = null; // optional third person in the compare view
 let friendData2 = { rota: null, overrides: [], shiftTypes: [] };
 let allAdminProfiles = []; // loaded once per admin session for account management
 let adminEditRota = null; // { userId, weeks, weekStartDay, rotaStart, pattern, shiftTypes }
+let adminEditCal = null;  // { userId, rota, overrides, shiftTypes } — editing a user's My Calendar
 // Rota template builder state (admin only)
 let rtplWeeks = 5;
 let rtplPattern = Array(35).fill('');
@@ -3891,22 +3892,32 @@ function showAdminEditProfile(p, parentDiv){
   parentDiv.appendChild(rowCL);
   parentDiv.appendChild(row2);
 
-  // Rota section
+  // Rota & calendar section
   const rotaSep = document.createElement('hr');
   rotaSep.style.cssText = 'border:none;border-top:1px solid var(--border);margin:8px 0;';
   const rotaHead = document.createElement('p');
   rotaHead.className = 'sec-title'; rotaHead.style.margin = '0 0 8px';
-  rotaHead.textContent = 'Rota';
+  rotaHead.textContent = 'Rota & calendar';
   const rotaEditor = document.createElement('div');
+  const calEditor = document.createElement('div');
   const loadRotaBtn = document.createElement('button');
   loadRotaBtn.className = 'btn secondary';
-  loadRotaBtn.textContent = 'Load & edit rota';
+  loadRotaBtn.textContent = 'Edit original rota';
   loadRotaBtn.style.cssText = 'font-size:13px;padding:6px 12px;';
-  loadRotaBtn.onclick = () => loadAdminUserRota(p.id, rotaEditor, loadRotaBtn);
+  loadRotaBtn.onclick = () => { calEditor.innerHTML=''; loadAdminUserRota(p.id, rotaEditor, loadRotaBtn); };
+  const loadCalBtn = document.createElement('button');
+  loadCalBtn.className = 'btn secondary';
+  loadCalBtn.textContent = 'Edit My Calendar';
+  loadCalBtn.style.cssText = 'font-size:13px;padding:6px 12px;';
+  loadCalBtn.onclick = () => { rotaEditor.innerHTML=''; loadRotaBtn.style.display=''; loadAdminUserCalendar(p.id, calEditor, loadCalBtn); };
+  const btnRow = document.createElement('div');
+  btnRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
+  btnRow.appendChild(loadRotaBtn); btnRow.appendChild(loadCalBtn);
   parentDiv.appendChild(rotaSep);
   parentDiv.appendChild(rotaHead);
-  parentDiv.appendChild(loadRotaBtn);
+  parentDiv.appendChild(btnRow);
   parentDiv.appendChild(rotaEditor);
+  parentDiv.appendChild(calEditor);
 
   saveBtn.onclick = async ()=>{
     const newUsername = usernameInput.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
@@ -3951,6 +3962,96 @@ async function loadAdminUserRota(userId, container, btn){
     schedule: Array.isArray(r && r.schedule) ? r.schedule : []     // their existing scheduled changes
   };
   renderAdminRotaGrid(container);
+}
+
+async function loadAdminUserCalendar(userId, container, btn){
+  btn.textContent = 'Loading…'; btn.disabled = true;
+  const [rotaRes, ovRes, stRes] = await Promise.all([
+    sb.from('rota_settings').select('*').eq('user_id', userId).maybeSingle(),
+    sb.from('overrides').select('*').eq('user_id', userId).order('override_date'),
+    sb.from('shift_types').select('*').eq('owner_id', userId).eq('is_template', false).order('name')
+  ]);
+  btn.textContent = 'Edit My Calendar'; btn.disabled = false; btn.style.display = 'none';
+  adminEditCal = { userId, rota: rotaRes.data || null, overrides: ovRes.data || [], shiftTypes: stRes.data || [] };
+  renderAdminCalEditor(container);
+}
+
+function adminCalValueLabel(id){
+  if(id === '__holiday__') return 'Holiday';
+  if(id === '') return 'Rest day';
+  const s = adminEditCal.shiftTypes.find(x => x.id === id);
+  return s ? s.name : 'a shift';
+}
+
+function renderAdminCalEditor(container){
+  const ac = adminEditCal;
+  container.innerHTML = '';
+  container.style.marginTop = '8px';
+
+  const help = document.createElement('p');
+  help.className = 'help'; help.style.marginTop = '0';
+  help.textContent = 'Change any day on this user\'s calendar — a different shift, rest day, or holiday. This adds a dated override on top of their rota; removing it puts the day back to their rota.';
+  container.appendChild(help);
+
+  const mk = (label, el, maxW)=>{ const d=document.createElement('div'); if(maxW)d.style.maxWidth=maxW; const l=document.createElement('label'); l.textContent=label; d.appendChild(l); d.appendChild(el); return d; };
+
+  const dateInput = document.createElement('input'); dateInput.type = 'date';
+  const shiftSel = document.createElement('select');
+  shiftSel.appendChild(new Option('Rest day', ''));
+  shiftSel.appendChild(new Option('Holiday', '__holiday__'));
+  ac.shiftTypes.forEach(s => shiftSel.appendChild(new Option(s.name, s.id)));
+
+  const currentNote = document.createElement('p'); currentNote.className = 'help'; currentNote.style.margin = '2px 0 0';
+  const showCurrent = ()=>{
+    if(!dateInput.value){ currentNote.textContent = ''; return; }
+    const id = computeEffectiveShift(ac.rota, ac.overrides, dateInput.value);
+    currentNote.textContent = 'Currently: ' + adminCalValueLabel(id);
+    if(id === '' || id === '__holiday__' || ac.shiftTypes.some(s => s.id === id)) shiftSel.value = id;
+  };
+  dateInput.onchange = showCurrent;
+
+  const applyBtn = document.createElement('button');
+  applyBtn.className = 'btn secondary'; applyBtn.textContent = 'Set day'; applyBtn.style.whiteSpace = 'nowrap';
+  const status = document.createElement('div'); status.className = 'status';
+  applyBtn.onclick = async ()=>{
+    if(!dateInput.value){ status.style.color='var(--danger)'; status.textContent='Pick a date.'; return; }
+    applyBtn.disabled = true; status.style.color='var(--text-dim)'; status.textContent='Saving…';
+    const { error } = await sb.from('overrides').upsert([{ user_id: ac.userId, override_date: dateInput.value, value: shiftSel.value, source: 'admin' }], { onConflict: 'user_id,override_date' });
+    applyBtn.disabled = false;
+    if(error){ status.style.color='var(--danger)'; status.textContent = /policy|permission|row-level/i.test(error.message) ? 'Needs the "Admins can manage any overrides" policy from db-setup.sql.' : error.message; return; }
+    const { data } = await sb.from('overrides').select('*').eq('user_id', ac.userId).order('override_date');
+    ac.overrides = data || [];
+    renderAdminCalEditor(container);
+  };
+
+  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '8px';
+  row.appendChild(mk('Date', dateInput, '170px'));
+  row.appendChild(mk('Change to', shiftSel, '170px'));
+  const bw = document.createElement('div'); bw.style.cssText = 'display:flex;align-items:flex-end;'; bw.appendChild(applyBtn);
+  row.appendChild(bw);
+  container.appendChild(row);
+  container.appendChild(currentNote);
+  container.appendChild(status);
+
+  const head = document.createElement('p');
+  head.className = 'help'; head.style.cssText = 'margin-top:12px;font-weight:600;color:var(--text);';
+  head.textContent = ac.overrides.length ? 'Calendar changes on file' : 'No calendar changes yet.';
+  container.appendChild(head);
+  ac.overrides.slice().sort((a,b)=> a.override_date < b.override_date ? -1 : 1).forEach(o=>{
+    const div = document.createElement('div'); div.className = 'off-item';
+    const dt = new Date(o.override_date + 'T00:00:00');
+    div.innerHTML = '<span>' + escapeHtml(dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short', year:'numeric'}))
+      + ' — <strong style="color:var(--text);">' + escapeHtml(adminCalValueLabel(o.value)) + '</strong>'
+      + (o.source ? ' <span style="color:var(--text-dim);font-size:11px;">(' + escapeHtml(o.source) + ')</span>' : '') + '</span>';
+    const rm = document.createElement('button'); rm.textContent = 'Remove'; rm.style.color = 'var(--danger)';
+    rm.onclick = async ()=>{
+      await sb.from('overrides').delete().eq('user_id', ac.userId).eq('override_date', o.override_date);
+      const { data } = await sb.from('overrides').select('*').eq('user_id', ac.userId).order('override_date');
+      ac.overrides = data || [];
+      renderAdminCalEditor(container);
+    };
+    div.appendChild(rm); container.appendChild(div);
+  });
 }
 
 // Derive the edited user's canonical Day-1/Week-1 date from the anchor
