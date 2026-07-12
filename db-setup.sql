@@ -71,6 +71,12 @@ drop policy if exists "Anyone can view overrides" on public.overrides;
 create policy "Anyone can view overrides" on public.overrides
   for select to authenticated using (true);
 
+-- Admins can edit any user's calendar (day overrides).
+drop policy if exists "Admins can manage any overrides" on public.overrides;
+create policy "Admins can manage any overrides" on public.overrides
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
 drop policy if exists "Anyone can view shift_types" on public.shift_types;
 create policy "Anyone can view shift_types" on public.shift_types
   for select to authenticated using (true);
