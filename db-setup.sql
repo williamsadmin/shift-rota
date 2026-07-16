@@ -77,6 +77,10 @@ create policy "Admins can manage any overrides" on public.overrides
   for all using (user_id = auth.uid() or public.is_admin())
   with check (user_id = auth.uid() or public.is_admin());
 
+-- Tracks whether the user has told their workplace about a requested overtime
+-- day, so the "tell your workplace" reminder can be dismissed once done.
+alter table public.overrides add column if not exists notified_workplace boolean default false;
+
 drop policy if exists "Anyone can view shift_types" on public.shift_types;
 create policy "Anyone can view shift_types" on public.shift_types
   for select to authenticated using (true);

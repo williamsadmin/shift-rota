@@ -204,7 +204,8 @@
       </section>
 
       <section id="overtime-banner" style="display:none;">
-        <p class="sec-title" style="color:var(--amber);">Overtime to request soon</p>
+        <p class="sec-title" style="color:var(--amber);">Tell your workplace about this overtime</p>
+        <p class="help" style="margin-top:0;">These are within 3 weeks now — including any you flagged further ahead than that. Let your workplace know, then mark it as told.</p>
         <div id="overtime-list"></div>
       </section>
 
@@ -1303,25 +1304,48 @@ function renderOvertimeBanner(){
   if(!banner || !list) return;
   const today = new Date(); today.setHours(0,0,0,0);
   const limit = new Date(today); limit.setDate(limit.getDate() + 21); // within 3 weeks
-  const soon = [...overtimeRequests].filter(d => {
-    const dt = new Date(d + 'T00:00:00');
-    return dt >= today && dt <= limit;
-  }).sort();
+  // Every overtime request — however far in advance it was flagged — surfaces
+  // here once its date is within 3 weeks, until it's marked as told.
+  const soon = allOverrides
+    .filter(o => o.source === 'overtime' && !o.notified_workplace)
+    .filter(o => {
+      const dt = new Date(o.override_date + 'T00:00:00');
+      return dt >= today && dt <= limit;
+    })
+    .sort((a,b)=> a.override_date < b.override_date ? -1 : 1);
   if(soon.length === 0){ banner.style.display = 'none'; return; }
   banner.style.display = 'block';
   list.innerHTML = '';
-  soon.forEach(d=>{
-    const dt = new Date(d + 'T00:00:00');
+  soon.forEach(o=>{
+    const dt = new Date(o.override_date + 'T00:00:00');
     const div = document.createElement('div');
     div.className = 'off-item';
-    div.innerHTML = '<span>💪 ' + escapeHtml(dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'})) + ' — request overtime</span>';
-    const btn = document.createElement('button');
-    btn.textContent = 'Cancel';
-    btn.style.color = 'var(--danger)';
-    btn.onclick = ()=>toggleOvertime(d);
-    div.appendChild(btn);
+    div.innerHTML = '<span>💪 ' + escapeHtml(dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'})) + ' — overtime requested</span>';
+    const grp = document.createElement('span'); grp.style.display='flex'; grp.style.gap='10px';
+    const toldBtn = document.createElement('button');
+    toldBtn.textContent = 'Mark as told';
+    toldBtn.style.color = 'var(--teal)';
+    toldBtn.onclick = ()=>markOvertimeTold(o.override_date);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.color = 'var(--danger)';
+    cancelBtn.onclick = ()=>toggleOvertime(o.override_date);
+    grp.appendChild(toldBtn); grp.appendChild(cancelBtn);
+    div.appendChild(grp);
     list.appendChild(div);
   });
+}
+
+async function markOvertimeTold(dateStr){
+  const { error } = await sb.from('overrides').update({ notified_workplace: true }).eq('user_id', currentUser.id).eq('override_date', dateStr);
+  if(error){
+    alert(/column|notified_workplace/i.test(error.message)
+      ? 'Needs a one-off database update — run the notified_workplace column change from db-setup.sql.'
+      : error.message);
+    return;
+  }
+  allOverrides = allOverrides.map(o => o.override_date === dateStr ? { ...o, notified_workplace: true } : o);
+  renderOvertimeBanner();
 }
 
 async function revertDayToOriginal(dateStr){
