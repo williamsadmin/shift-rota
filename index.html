@@ -180,8 +180,8 @@
   </div>
   <div class="tabbar">
     <button class="tab-btn active" data-tab="calendar" onclick="switchTab('calendar')">My Calendar</button>
-    <button class="tab-btn" data-tab="original" onclick="switchTab('original')">Original Rota</button>
     <button class="tab-btn" data-tab="friends" onclick="switchTab('friends')">People</button>
+    <button class="tab-btn" data-tab="original" onclick="switchTab('original')">Holidays &amp; Rota</button>
     <button class="tab-btn" data-tab="templates" onclick="switchTab('templates')">Templates</button>
     <button class="tab-btn" data-tab="account" onclick="switchTab('account')">Account &amp; Setup</button>
     <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
@@ -265,6 +265,10 @@
       </section>
 
       <section>
+        <div class="checkbox-row" style="margin-bottom:10px;">
+          <input type="checkbox" id="quick-pay-toggle" onchange="toggleQuickPay()">
+          <label for="quick-pay-toggle">💷 Show pay</label>
+        </div>
         <div class="row">
           <div style="max-width:160px;">
             <label>Show next</label>
@@ -293,7 +297,7 @@
     </div>
     <div class="tab-panel" id="tab-original">
       <header style="margin-bottom:16px;">
-        <p class="eyebrow">Original Rota</p>
+        <p class="eyebrow">Holidays &amp; Rota</p>
         <h1>Your contracted pattern</h1>
         <p class="sub">This is your rota exactly as set up in Account &amp; Setup — no holidays or swaps applied. Booked holidays are listed separately below.</p>
       </header>
@@ -702,7 +706,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
             </select>
           </div>
         </div>
-        <p class="help" style="margin-top:6px;">Applies everywhere a weekly grid is shown — here, Original Rota, and My Calendar.</p>
+        <p class="help" style="margin-top:6px;">Applies everywhere a weekly grid is shown — here, Holidays &amp; Rota, and My Calendar.</p>
       </section>
 
       <section>
@@ -2154,6 +2158,8 @@ async function loadAccountData(){
     payRates = { enabled:false, sun:0, mon:0, tue:0, wed:0, thu:0, fri:0, sat:0 };
   }
   document.getElementById('pay-enabled').checked = payRates.enabled;
+  const quickPayToggle = document.getElementById('quick-pay-toggle');
+  if(quickPayToggle) quickPayToggle.checked = payRates.enabled;
   ['sun','mon','tue','wed','thu','fri','sat'].forEach(k=>{
     document.getElementById('pay-' + k).value = payRates[k] || '';
   });
@@ -2750,7 +2756,39 @@ function togglePaySection(){
   const on = document.getElementById('pay-enabled').checked;
   document.getElementById('pay-rates-box').style.display = on ? 'block' : 'none';
   payRates.enabled = on;
+  const quickPayToggle = document.getElementById('quick-pay-toggle');
+  if(quickPayToggle) quickPayToggle.checked = on;
   renderOriginalGrid();
+}
+
+// Quick, instant on/off for showing pay on My Calendar — mirrors "Track my pay"
+// in Account & Setup but saves immediately, without needing to press Save there.
+async function toggleQuickPay(){
+  const checkbox = document.getElementById('quick-pay-toggle');
+  const on = checkbox.checked;
+  const prev = payRates.enabled;
+  payRates.enabled = on;
+  const acctCheckbox = document.getElementById('pay-enabled');
+  if(acctCheckbox) acctCheckbox.checked = on;
+  const box = document.getElementById('pay-rates-box');
+  if(box) box.style.display = on ? 'block' : 'none';
+  renderOriginalGrid();
+  renderCalendarTab();
+  const { error } = await sb.from('pay_rates').upsert({
+    user_id: currentUser.id,
+    enabled: payRates.enabled,
+    sun: payRates.sun, mon: payRates.mon, tue: payRates.tue, wed: payRates.wed,
+    thu: payRates.thu, fri: payRates.fri, sat: payRates.sat
+  });
+  if(error){
+    payRates.enabled = prev;
+    checkbox.checked = prev;
+    if(acctCheckbox) acctCheckbox.checked = prev;
+    if(box) box.style.display = prev ? 'block' : 'none';
+    renderOriginalGrid();
+    renderCalendarTab();
+    alert('Could not update: ' + error.message);
+  }
 }
 
 // Create a personal shift type on the fly (used by the rota builder and the
