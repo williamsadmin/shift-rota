@@ -1,0 +1,16 @@
+{
+  "name": "Shift Rota",
+  "short_name": "Shift Rota",
+  "description": "Your rota, holidays, pay and overtime — always up to date.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1B1E26",
+  "theme_color": "#1B1E26",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

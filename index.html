@@ -2,8 +2,17 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
 <title>Shift Rota</title>
+<meta name="description" content="Your rota, holidays, pay and overtime — always up to date.">
+<meta name="theme-color" content="#1B1E26">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Shift Rota">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -138,6 +147,8 @@
 </style>
 </head>
 <body>
+
+<button id="pwa-install-btn" class="btn" style="display:none;position:fixed;bottom:16px;right:16px;z-index:60;box-shadow:0 4px 16px rgba(0,0,0,.4);">Install app</button>
 
 <!-- AUTH SCREEN -->
 <div id="auth-screen">
@@ -4341,6 +4352,32 @@ async function wipeUserData(p){
   ]);
   alert('Data wiped for ' + (p.email||p.id) + '.');
 }
+
+// ---------- Progressive Web App (installable) ----------
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{ navigator.serviceWorker.register('sw.js').catch(()=>{}); });
+}
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e)=>{
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  const b = document.getElementById('pwa-install-btn');
+  if(b) b.style.display = 'block';
+});
+(function(){
+  const b = document.getElementById('pwa-install-btn');
+  if(b) b.addEventListener('click', async ()=>{
+    if(!deferredInstallPrompt) return;
+    deferredInstallPrompt.prompt();
+    await deferredInstallPrompt.userChoice;
+    deferredInstallPrompt = null;
+    b.style.display = 'none';
+  });
+})();
+window.addEventListener('appinstalled', ()=>{
+  const b = document.getElementById('pwa-install-btn');
+  if(b) b.style.display = 'none';
+});
 </script>
 </body>
 </html>
