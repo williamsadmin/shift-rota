@@ -31,6 +31,8 @@
   .sub{color:var(--text-dim);font-size:14px;margin:0;line-height:1.5;}
   section{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:16px;}
   .sec-title{font-family:'Oswald',sans-serif;font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--text-dim);margin:0 0 12px;}
+  summary.sec-title{cursor:pointer;user-select:none;margin:0;}
+  summary.sec-title::marker{color:var(--amber);}
   label{font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px;}
   input[type=text], input[type=time], input[type=date], input[type=email], input[type=password], select{
     background:var(--surface-alt);border:1px solid var(--border);color:var(--text);border-radius:7px;
@@ -210,48 +212,56 @@
       </section>
 
       <section>
-        <p class="sec-title">Change a day</p>
-        <p class="help" style="margin-top:0;">Pick a date, then what it should become — a different shift, or a rest day.</p>
-        <div class="row">
-          <div style="max-width:180px;"><label>Date</label><input type="date" id="swap-from"></div>
-        </div>
-        <div style="margin-bottom:10px;">
-          <label>Change to</label>
-          <input type="text" id="swap-shift-search" placeholder="Search shifts…" oninput="renderSwapShiftPicker()" onfocus="revealSwapPicker()" autocomplete="off">
-        </div>
-        <div id="swap-shift-picker" style="margin-bottom:10px;"></div>
-        <input type="hidden" id="swap-to-shift" value="">
-        <button type="button" class="btn secondary" style="margin-bottom:10px;font-size:12px;padding:6px 10px;" onclick="toggleSwapCreate()">＋ Create a new shift</button>
-        <div id="swap-create-box" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--surface-alt);">
-          <div class="row"><div><label>Name</label><input type="text" id="swap-new-name" placeholder="e.g. Spare"></div></div>
-          <div class="row">
-            <div><label>Start</label><input type="time" id="swap-new-start"></div>
-            <div><label>Finish</label><input type="time" id="swap-new-end"></div>
+        <details class="collapsible-section">
+          <summary class="sec-title">Change a day</summary>
+          <div style="margin-top:12px;">
+            <p class="help" style="margin-top:0;">Pick a date, then what it should become — a different shift, or a rest day.</p>
+            <div class="row">
+              <div style="max-width:180px;"><label>Date</label><input type="date" id="swap-from"></div>
+            </div>
+            <div style="margin-bottom:10px;">
+              <label>Change to</label>
+              <input type="text" id="swap-shift-search" placeholder="Search shifts…" oninput="renderSwapShiftPicker()" onfocus="revealSwapPicker()" autocomplete="off">
+            </div>
+            <div id="swap-shift-picker" style="margin-bottom:10px;"></div>
+            <input type="hidden" id="swap-to-shift" value="">
+            <button type="button" class="btn secondary" style="margin-bottom:10px;font-size:12px;padding:6px 10px;" onclick="toggleSwapCreate()">＋ Create a new shift</button>
+            <div id="swap-create-box" style="display:none;margin-bottom:10px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--surface-alt);">
+              <div class="row"><div><label>Name</label><input type="text" id="swap-new-name" placeholder="e.g. Spare"></div></div>
+              <div class="row">
+                <div><label>Start</label><input type="time" id="swap-new-start"></div>
+                <div><label>Finish</label><input type="time" id="swap-new-end"></div>
+              </div>
+              <p class="help" style="margin-top:0;">Leave the times blank for an all-day / flexible shift.</p>
+              <button class="btn secondary full" type="button" onclick="createSwapShift()">Create &amp; select</button>
+              <div class="status" id="swap-new-status"></div>
+            </div>
+            <button class="btn secondary full" onclick="initiateSelfSwap()">Apply change</button>
+            <div id="swap-confirm-box" style="display:none;margin-top:12px;">
+              <p class="help" style="margin-top:0;font-weight:600;color:var(--text);">Do you need to inform your workplace of this change?</p>
+              <div class="row">
+                <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('no')">No</button>
+                <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('already')">Already done</button>
+                <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('need_to')">I need to</button>
+              </div>
+            </div>
+            <div class="status" id="swap-status"></div>
           </div>
-          <p class="help" style="margin-top:0;">Leave the times blank for an all-day / flexible shift.</p>
-          <button class="btn secondary full" type="button" onclick="createSwapShift()">Create &amp; select</button>
-          <div class="status" id="swap-new-status"></div>
-        </div>
-        <button class="btn secondary full" onclick="initiateSelfSwap()">Apply change</button>
-        <div id="swap-confirm-box" style="display:none;margin-top:12px;">
-          <p class="help" style="margin-top:0;font-weight:600;color:var(--text);">Do you need to inform your workplace of this change?</p>
-          <div class="row">
-            <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('no')">No</button>
-            <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('already')">Already done</button>
-            <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('need_to')">I need to</button>
-          </div>
-        </div>
-        <div class="status" id="swap-status"></div>
+        </details>
       </section>
 
       <section>
-        <p class="sec-title">Share your live calendar</p>
-        <p class="help" style="margin-top:0;">One link, always up to date — give it to anyone, or subscribe to it yourself in any external calendar.</p>
-        <div class="row">
-          <div><input type="text" id="share-link-box" readonly></div>
-          <button class="btn secondary" onclick="copyShareLink()" style="white-space:nowrap;">Copy link</button>
-        </div>
-        <div class="status" id="share-status"></div>
+        <details class="collapsible-section">
+          <summary class="sec-title">Share your live calendar</summary>
+          <div style="margin-top:12px;">
+            <p class="help" style="margin-top:0;">One link, always up to date — give it to anyone, or subscribe to it yourself in any external calendar.</p>
+            <div class="row">
+              <div><input type="text" id="share-link-box" readonly></div>
+              <button class="btn secondary" onclick="copyShareLink()" style="white-space:nowrap;">Copy link</button>
+            </div>
+            <div class="status" id="share-status"></div>
+          </div>
+        </details>
       </section>
 
       <section>
