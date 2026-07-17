@@ -142,6 +142,19 @@
     padding:13px 8px;cursor:pointer;border-bottom:3px solid transparent;white-space:nowrap;
   }
   .tabbar button.active{color:var(--amber);border-bottom-color:var(--amber);}
+  .menu-toggle-btn{
+    flex:0 0 auto;background:none;border:none;border-left:1px solid var(--border);color:var(--text-dim);
+    font-size:17px;padding:13px 18px;cursor:pointer;
+  }
+  .menu-toggle-btn.active{color:var(--amber);}
+  .menu-panel{display:flex;flex-direction:column;background:var(--surface);border-bottom:1px solid var(--border);}
+  .menu-panel button{
+    display:block;width:100%;text-align:left;background:none;border:none;border-bottom:1px solid var(--border);
+    color:var(--text-dim);font-family:inherit;font-size:13px;font-weight:600;text-transform:uppercase;
+    letter-spacing:.03em;padding:14px 16px;cursor:pointer;
+  }
+  .menu-panel button:last-child{border-bottom:none;}
+  .menu-panel button.active{color:var(--amber);}
   .tab-panel{display:none;}
   .tab-panel.active{display:block;}
   .coming-soon{padding:60px 16px;text-align:center;color:var(--text-dim);}
@@ -159,7 +172,7 @@
   <p class="sub" style="margin-bottom:16px;">Your rota, holidays and pay, saved to your account — open it from any device.</p>
   <section>
     <div class="row"><div><label>Email</label><input type="email" id="auth-email" autocomplete="email"></div></div>
-    <div class="row" id="auth-username-row" style="display:none;"><div><label>Username</label><input type="text" id="auth-username" autocomplete="username" placeholder="e.g. ryanw"></div></div>
+    <div class="row" id="auth-username-row" style="display:none;"><div><label>Username</label><input type="text" id="auth-username" autocomplete="username" placeholder="e.g. chicken"></div></div>
     <div class="row"><div><label>Password</label><input type="password" id="auth-password" autocomplete="current-password"></div></div>
     <button class="btn full" id="auth-submit-btn" onclick="submitAuth()">Log in</button>
     <div class="status" id="auth-status"></div>
@@ -181,7 +194,11 @@
   <div class="tabbar">
     <button class="tab-btn active" data-tab="calendar" onclick="switchTab('calendar')">My Calendar</button>
     <button class="tab-btn" data-tab="friends" onclick="switchTab('friends')">People</button>
-    <button class="tab-btn" data-tab="original" onclick="switchTab('original')">Holidays &amp; Rota</button>
+    <button class="tab-btn" data-tab="holidays" onclick="switchTab('holidays')">Holidays</button>
+    <button class="menu-toggle-btn" id="menu-toggle-btn" onclick="toggleMenu()" aria-label="More">☰</button>
+  </div>
+  <div class="menu-panel" id="menu-panel" style="display:none;">
+    <button class="tab-btn" data-tab="rota" onclick="switchTab('rota')">Rota</button>
     <button class="tab-btn" data-tab="templates" onclick="switchTab('templates')">Templates</button>
     <button class="tab-btn" data-tab="account" onclick="switchTab('account')">Account &amp; Setup</button>
     <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
@@ -213,7 +230,7 @@
 
       <section>
         <details class="collapsible-section">
-          <summary class="sec-title">Change a day</summary>
+          <summary class="sec-title">Swap a shift</summary>
           <div style="margin-top:12px;">
             <p class="help" style="margin-top:0;">Pick a date, then what it should become — a different shift, or a rest day.</p>
             <div class="row">
@@ -251,20 +268,6 @@
       </section>
 
       <section>
-        <details class="collapsible-section">
-          <summary class="sec-title">Share your live calendar</summary>
-          <div style="margin-top:12px;">
-            <p class="help" style="margin-top:0;">One link, always up to date — give it to anyone, or subscribe to it yourself in any external calendar.</p>
-            <div class="row">
-              <div><input type="text" id="share-link-box" readonly></div>
-              <button class="btn secondary" onclick="copyShareLink()" style="white-space:nowrap;">Copy link</button>
-            </div>
-            <div class="status" id="share-status"></div>
-          </div>
-        </details>
-      </section>
-
-      <section>
         <div class="checkbox-row" style="margin-bottom:10px;">
           <input type="checkbox" id="quick-pay-toggle" onchange="toggleQuickPay()">
           <label for="quick-pay-toggle">💷 Show pay</label>
@@ -295,11 +298,11 @@
         <div id="calendar-grid"></div>
       </section>
     </div>
-    <div class="tab-panel" id="tab-original">
+    <div class="tab-panel" id="tab-rota">
       <header style="margin-bottom:16px;">
-        <p class="eyebrow">Holidays &amp; Rota</p>
+        <p class="eyebrow">Rota</p>
         <h1>Your contracted pattern</h1>
-        <p class="sub">This is your rota exactly as set up in Account &amp; Setup — no holidays or swaps applied. Booked holidays are listed separately below.</p>
+        <p class="sub">This is your rota exactly as set up in Account &amp; Setup — no holidays or swaps applied.</p>
       </header>
 
       <section>
@@ -307,6 +310,27 @@
         <div id="original-grid"></div>
         <div id="original-income" style="margin-top:14px;"></div>
       </section>
+
+      <section>
+        <details class="collapsible-section">
+          <summary class="sec-title">Share your live calendar</summary>
+          <div style="margin-top:12px;">
+            <p class="help" style="margin-top:0;">One link, always up to date — give it to anyone, or subscribe to it yourself in any external calendar.</p>
+            <div class="row">
+              <div><input type="text" id="share-link-box" readonly></div>
+              <button class="btn secondary" onclick="copyShareLink()" style="white-space:nowrap;">Copy link</button>
+            </div>
+            <div class="status" id="share-status"></div>
+          </div>
+        </details>
+      </section>
+    </div>
+    <div class="tab-panel" id="tab-holidays">
+      <header style="margin-bottom:16px;">
+        <p class="eyebrow">Holidays</p>
+        <h1>Time off</h1>
+        <p class="sub">Book time off — it's applied to My Calendar automatically and always kept correct, even across rota changes.</p>
+      </header>
 
       <section>
         <p class="sec-title">Booked holidays</p>
@@ -564,7 +588,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <p class="sec-title">Your username</p>
         <p class="help" style="margin-top:0;">This is how you appear to everyone else in the People list.</p>
         <div class="row">
-          <div><input type="text" id="username-input" placeholder="e.g. ryanw"></div>
+          <div><input type="text" id="username-input" placeholder="e.g. chicken"></div>
           <button class="btn secondary" onclick="saveUsername()" style="white-space:nowrap;">Save</button>
         </div>
         <div class="status" id="username-status"></div>
@@ -706,7 +730,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
             </select>
           </div>
         </div>
-        <p class="help" style="margin-top:6px;">Applies everywhere a weekly grid is shown — here, Holidays &amp; Rota, and My Calendar.</p>
+        <p class="help" style="margin-top:6px;">Applies everywhere a weekly grid is shown — here, Rota, and My Calendar.</p>
       </section>
 
       <section>
@@ -2096,10 +2120,34 @@ async function checkExistingSession(){
 }
 
 // ---------- TABS ----------
+const MENU_TABS = ['rota', 'templates', 'account', 'admin'];
+
 function switchTab(tab){
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
+  const menuBtn = document.getElementById('menu-toggle-btn');
+  if(menuBtn) menuBtn.classList.toggle('active', MENU_TABS.includes(tab));
+  closeMenu();
 }
+
+function toggleMenu(){
+  const panel = document.getElementById('menu-panel');
+  if(!panel) return;
+  panel.style.display = panel.style.display === 'flex' ? 'none' : 'flex';
+}
+
+function closeMenu(){
+  const panel = document.getElementById('menu-panel');
+  if(panel) panel.style.display = 'none';
+}
+
+document.addEventListener('click', (e)=>{
+  const panel = document.getElementById('menu-panel');
+  const btn = document.getElementById('menu-toggle-btn');
+  if(!panel || panel.style.display !== 'flex') return;
+  if(panel.contains(e.target) || (btn && btn.contains(e.target))) return;
+  panel.style.display = 'none';
+});
 
 // ---------- ACCOUNT & SETUP TAB ----------
 document.getElementById('st-allday').addEventListener('change', (e)=>{
@@ -2890,7 +2938,7 @@ function rateForRealWeekday(dow){
 }
 
 function rateForPatternColumn(d){
-  // d: grid column 0-6 within the abstract pattern (Account & Setup / Original Rota).
+  // d: grid column 0-6 within the abstract pattern (Account & Setup / Rota).
   // The pattern has no real date of its own until exported, so we use the week-start
   // preference as the convention for which weekday each column represents.
   return rateForRealWeekday((weekStartDay + d) % 7);
