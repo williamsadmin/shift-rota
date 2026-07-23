@@ -415,11 +415,11 @@
       <header style="margin-bottom:16px;">
         <p class="eyebrow">Ratings</p>
         <h1>Rate your shifts</h1>
-        <p class="sub">Rate a day's shift and the bus you drove it in — just for you. See your favourites below.</p>
+        <p class="sub">Rate a day's shift, and separately rate any bus you've driven — just for you. Do either one on its own. See your favourites below.</p>
       </header>
 
       <section>
-        <p class="sec-title">Rate a day</p>
+        <p class="sec-title">Rate a shift</p>
         <div class="row">
           <div style="max-width:200px;"><label>Date</label><input type="date" id="rate-date" onchange="onRateDateChange()"></div>
         </div>
@@ -429,21 +429,29 @@
           <div id="rate-shift-stars" class="star-picker"></div>
           <input type="hidden" id="rate-shift-value" value="">
         </div>
+        <button class="btn full" onclick="saveShiftRating()">Save shift rating</button>
+        <div class="status" id="rate-shift-status"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Rate a bus</p>
+        <p class="help" style="margin-top:0;">Independent of the shift rating above — log any bus you've driven, any day. You can rate more than one bus on the same day.</p>
         <div class="row">
-          <div><label>Bus fleet number (optional)</label><input type="text" id="rate-bus-number" placeholder="e.g. 501"></div>
+          <div style="max-width:200px;"><label>Date</label><input type="date" id="bus-rate-date" onchange="onBusRateFormChange()"></div>
+          <div><label>Bus fleet number</label><input type="text" id="bus-rate-number" placeholder="e.g. 501" oninput="onBusRateFormChange()"></div>
         </div>
         <div style="margin-bottom:12px;">
           <label>Bus rating</label>
           <div id="rate-bus-stars" class="star-picker"></div>
           <input type="hidden" id="rate-bus-value" value="">
         </div>
-        <button class="btn full" onclick="saveShiftRating()">Save rating</button>
-        <div class="status" id="rate-status"></div>
+        <button class="btn full" onclick="saveBusRating()">Save bus rating</button>
+        <div class="status" id="rate-bus-status"></div>
       </section>
 
       <section>
         <p class="sec-title">Best shift by day of the week</p>
-        <p class="help" style="margin-top:0;">Your highest-rated shift for each weekday, from every rating you've made.</p>
+        <p class="help" style="margin-top:0;">Your highest-rated shift for each weekday, from every shift rating you've made.</p>
         <div id="best-shift-grid" class="grid"></div>
       </section>
 
@@ -454,8 +462,15 @@
 
       <section>
         <details class="collapsible-section">
-          <summary class="sec-title">Your ratings</summary>
-          <div id="ratings-list" style="margin-top:12px;"></div>
+          <summary class="sec-title">Your shift ratings</summary>
+          <div id="shift-ratings-list" style="margin-top:12px;"></div>
+        </details>
+      </section>
+
+      <section>
+        <details class="collapsible-section">
+          <summary class="sec-title">Your bus ratings</summary>
+          <div id="bus-ratings-list" style="margin-top:12px;"></div>
         </details>
       </section>
     </div>
@@ -3806,12 +3821,17 @@ async function saveOriginalRota(){
   renderCalendarTab();
 }
 
-// ---------- Ratings (personal — rate a day's shift + the bus driven) ----------
-let myRatings = [];
+// ---------- Ratings (personal — shift ratings and bus ratings are fully independent) ----------
+let myShiftRatings = [];
+let myBusRatings = [];
 
 async function loadRatings(){
-  const { data, error } = await sb.from('shift_ratings').select('*').eq('user_id', currentUser.id);
-  myRatings = error ? [] : (data || []);
+  const [shiftRes, busRes] = await Promise.all([
+    sb.from('shift_ratings').select('*').eq('user_id', currentUser.id),
+    sb.from('bus_ratings').select('*').eq('user_id', currentUser.id)
+  ]);
+  myShiftRatings = shiftRes.error ? [] : (shiftRes.data || []);
+  myBusRatings = busRes.error ? [] : (busRes.data || []);
 }
 
 function renderStarPicker(containerId, hiddenId){
@@ -3837,44 +3857,36 @@ function shiftNameForRating(dateStr){
   return shift ? shift.name : '';
 }
 
+// ----- Shift rating -----
 function onRateDateChange(){
   const d = document.getElementById('rate-date').value;
   const labelEl = document.getElementById('rate-shift-label');
   if(!d){
     labelEl.textContent = 'Pick a date to rate its shift.';
     document.getElementById('rate-shift-value').value = '';
-    document.getElementById('rate-bus-number').value = '';
-    document.getElementById('rate-bus-value').value = '';
     renderStarPicker('rate-shift-stars', 'rate-shift-value');
-    renderStarPicker('rate-bus-stars', 'rate-bus-value');
     return;
   }
   const shiftName = shiftNameForRating(d);
   labelEl.innerHTML = shiftName
     ? 'Shift: <strong style="color:var(--text);">' + escapeHtml(shiftName) + '</strong>'
     : 'No shift is set for that day yet.';
-  const existing = myRatings.find(r => r.rating_date === d);
+  const existing = myShiftRatings.find(r => r.rating_date === d);
   document.getElementById('rate-shift-value').value = existing ? existing.shift_rating : '';
-  document.getElementById('rate-bus-number').value = existing ? (existing.bus_number || '') : '';
-  document.getElementById('rate-bus-value').value = existing ? (existing.bus_rating || '') : '';
   renderStarPicker('rate-shift-stars', 'rate-shift-value');
-  renderStarPicker('rate-bus-stars', 'rate-bus-value');
 }
 
 async function saveShiftRating(){
-  const statusEl = document.getElementById('rate-status');
+  const statusEl = document.getElementById('rate-shift-status');
   const d = document.getElementById('rate-date').value;
   if(!d){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Pick a date first.'; return; }
   const shiftName = shiftNameForRating(d);
   if(!shiftName){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'No shift is set for that day.'; return; }
   const shiftRating = parseInt(document.getElementById('rate-shift-value').value, 10) || 0;
   if(!shiftRating){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Rate the shift (tap a star).'; return; }
-  const busNumber = document.getElementById('rate-bus-number').value.trim();
-  const busRating = parseInt(document.getElementById('rate-bus-value').value, 10) || 0;
   statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
   const { error } = await sb.from('shift_ratings').upsert([{
-    user_id: currentUser.id, rating_date: d, shift_name: shiftName,
-    shift_rating: shiftRating, bus_number: busNumber || null, bus_rating: busNumber ? (busRating || null) : null
+    user_id: currentUser.id, rating_date: d, shift_name: shiftName, shift_rating: shiftRating
   }], { onConflict: 'user_id,rating_date' });
   if(error){
     statusEl.style.color = 'var(--danger)';
@@ -3888,31 +3900,26 @@ async function saveShiftRating(){
   renderRatingsTab();
 }
 
-async function deleteRating(dateStr){
-  if(!confirm('Delete this rating?')) return;
+async function deleteShiftRating(dateStr){
+  if(!confirm('Delete this shift rating?')) return;
   await sb.from('shift_ratings').delete().eq('user_id', currentUser.id).eq('rating_date', dateStr);
   await loadRatings();
   renderRatingsTab();
 }
 
-function renderRatingsList(){
-  const el = document.getElementById('ratings-list');
+function renderShiftRatingsList(){
+  const el = document.getElementById('shift-ratings-list');
   if(!el) return;
-  if(myRatings.length === 0){ el.innerHTML = '<p class="empty">No ratings yet.</p>'; return; }
+  if(myShiftRatings.length === 0){ el.innerHTML = '<p class="empty">No shift ratings yet.</p>'; return; }
   el.innerHTML = '';
-  myRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
+  myShiftRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
     const div = document.createElement('div'); div.className = 'off-item';
     const dt = new Date(r.rating_date + 'T00:00:00');
     const stars = '★'.repeat(r.shift_rating) + '☆'.repeat(5 - r.shift_rating);
-    let busPart = '';
-    if(r.bus_number){
-      const busStars = r.bus_rating ? ('★'.repeat(r.bus_rating) + '☆'.repeat(5 - r.bus_rating)) : '';
-      busPart = ' · Bus ' + escapeHtml(r.bus_number) + (busStars ? ' ' + busStars : '');
-    }
     div.innerHTML = '<span>' + escapeHtml(dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}))
-      + ' — <strong style="color:var(--text);">' + escapeHtml(r.shift_name) + '</strong> ' + stars + busPart + '</span>';
+      + ' — <strong style="color:var(--text);">' + escapeHtml(r.shift_name) + '</strong> ' + stars + '</span>';
     const rm = document.createElement('button'); rm.textContent = 'Delete'; rm.style.color = 'var(--danger)';
-    rm.onclick = ()=>deleteRating(r.rating_date);
+    rm.onclick = ()=>deleteShiftRating(r.rating_date);
     div.appendChild(rm); el.appendChild(div);
   });
 }
@@ -3921,7 +3928,7 @@ function renderBestShiftByDay(){
   const el = document.getElementById('best-shift-grid');
   if(!el) return;
   const buckets = Array.from({length:7}, ()=>({}));
-  myRatings.forEach(r=>{
+  myShiftRatings.forEach(r=>{
     if(!r.shift_rating) return;
     const dow = new Date(r.rating_date + 'T00:00:00').getDay();
     const b = buckets[dow];
@@ -3954,11 +3961,68 @@ function renderBestShiftByDay(){
   }
 }
 
+// ----- Bus rating -----
+function onBusRateFormChange(){
+  const d = document.getElementById('bus-rate-date').value;
+  const num = document.getElementById('bus-rate-number').value.trim();
+  const existing = (d && num) ? myBusRatings.find(r => r.rating_date === d && r.bus_number.toLowerCase() === num.toLowerCase()) : null;
+  document.getElementById('rate-bus-value').value = existing ? existing.bus_rating : '';
+  renderStarPicker('rate-bus-stars', 'rate-bus-value');
+}
+
+async function saveBusRating(){
+  const statusEl = document.getElementById('rate-bus-status');
+  const d = document.getElementById('bus-rate-date').value;
+  const busNumber = document.getElementById('bus-rate-number').value.trim();
+  if(!d){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Pick a date first.'; return; }
+  if(!busNumber){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Enter the bus fleet number.'; return; }
+  const busRating = parseInt(document.getElementById('rate-bus-value').value, 10) || 0;
+  if(!busRating){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Rate the bus (tap a star).'; return; }
+  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
+  const { error } = await sb.from('bus_ratings').upsert([{
+    user_id: currentUser.id, rating_date: d, bus_number: busNumber, bus_rating: busRating
+  }], { onConflict: 'user_id,rating_date,bus_number' });
+  if(error){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = /relation|bus_ratings|does not exist/i.test(error.message)
+      ? 'Bus ratings need a one-off database update — run the bus_ratings block from db-setup.sql.'
+      : error.message;
+    return;
+  }
+  statusEl.style.color = 'var(--teal)'; statusEl.textContent = 'Saved.';
+  await loadRatings();
+  renderRatingsTab();
+}
+
+async function deleteBusRating(dateStr, busNumber){
+  if(!confirm('Delete this bus rating?')) return;
+  await sb.from('bus_ratings').delete().eq('user_id', currentUser.id).eq('rating_date', dateStr).eq('bus_number', busNumber);
+  await loadRatings();
+  renderRatingsTab();
+}
+
+function renderBusRatingsList(){
+  const el = document.getElementById('bus-ratings-list');
+  if(!el) return;
+  if(myBusRatings.length === 0){ el.innerHTML = '<p class="empty">No bus ratings yet.</p>'; return; }
+  el.innerHTML = '';
+  myBusRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
+    const div = document.createElement('div'); div.className = 'off-item';
+    const dt = new Date(r.rating_date + 'T00:00:00');
+    const stars = '★'.repeat(r.bus_rating) + '☆'.repeat(5 - r.bus_rating);
+    div.innerHTML = '<span>' + escapeHtml(dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}))
+      + ' — <strong style="color:var(--text);">Bus ' + escapeHtml(r.bus_number) + '</strong> ' + stars + '</span>';
+    const rm = document.createElement('button'); rm.textContent = 'Delete'; rm.style.color = 'var(--danger)';
+    rm.onclick = ()=>deleteBusRating(r.rating_date, r.bus_number);
+    div.appendChild(rm); el.appendChild(div);
+  });
+}
+
 function renderTopBuses(){
   const el = document.getElementById('top-buses-list');
   if(!el) return;
   const buckets = {};
-  myRatings.forEach(r=>{
+  myBusRatings.forEach(r=>{
     if(!r.bus_number || !r.bus_rating) return;
     if(!buckets[r.bus_number]) buckets[r.bus_number] = { sum:0, count:0 };
     buckets[r.bus_number].sum += r.bus_rating;
@@ -3979,7 +4043,8 @@ function renderTopBuses(){
 }
 
 function renderRatingsTab(){
-  renderRatingsList();
+  renderShiftRatingsList();
+  renderBusRatingsList();
   renderBestShiftByDay();
   renderTopBuses();
   renderStarPicker('rate-shift-stars', 'rate-shift-value');

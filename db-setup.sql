@@ -123,20 +123,40 @@ create policy "Users manage own overtime" on public.overtime_requests
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------
--- 6. Shift & bus ratings (personal — one rating per user per day)
+-- 6. Shift ratings (personal — one shift rating per user per day)
 -- ---------------------------------------------------------------------
 create table if not exists public.shift_ratings (
   user_id      uuid not null references auth.users(id) on delete cascade,
   rating_date  date not null,
   shift_name   text not null,
   shift_rating smallint not null check (shift_rating between 1 and 5),
-  bus_number   text,
-  bus_rating   smallint check (bus_rating between 1 and 5),
   created_at   timestamptz default now(),
   primary key (user_id, rating_date)
 );
+-- Drop the old combined bus columns if this table was created by an earlier
+-- version of this script (bus ratings now live in their own table, below).
+alter table public.shift_ratings drop column if exists bus_number;
+alter table public.shift_ratings drop column if exists bus_rating;
 alter table public.shift_ratings enable row level security;
 
 drop policy if exists "Users manage own ratings" on public.shift_ratings;
 create policy "Users manage own ratings" on public.shift_ratings
+  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------
+-- 7. Bus ratings (personal — independent of shift ratings; a user can log
+--    more than one bus on the same day, one rating per bus per day)
+-- ---------------------------------------------------------------------
+create table if not exists public.bus_ratings (
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  rating_date date not null,
+  bus_number  text not null,
+  bus_rating  smallint not null check (bus_rating between 1 and 5),
+  created_at  timestamptz default now(),
+  primary key (user_id, rating_date, bus_number)
+);
+alter table public.bus_ratings enable row level security;
+
+drop policy if exists "Users manage own bus ratings" on public.bus_ratings;
+create policy "Users manage own bus ratings" on public.bus_ratings
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
