@@ -50,6 +50,10 @@ alter table public.profiles add column if not exists location text;
 alter table public.profiles add column if not exists pending_company text;
 alter table public.profiles add column if not exists pending_location text;
 
+-- Which 3 tabs a user has chosen for the top bar (the rest live in the ☰ menu).
+-- Covered by the existing "Users can update own profile" policy.
+alter table public.profiles add column if not exists top_tabs text[];
+
 -- ---------------------------------------------------------------------
 -- 3. Rotas — any logged-in user can view anyone's rota (People tab).
 --    Writes stay restricted to the owner, plus admins can manage any rota.

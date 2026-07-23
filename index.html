@@ -672,6 +672,27 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
       </section>
 
       <section>
+        <p class="sec-title">Navigation</p>
+        <p class="help" style="margin-top:0;">Pick the 3 tabs shown along the top — everything else moves into the ☰ menu.</p>
+        <div class="row">
+          <div>
+            <label>1st tab</label>
+            <select id="top-tab-0" onchange="onTopTabPick()"></select>
+          </div>
+          <div>
+            <label>2nd tab</label>
+            <select id="top-tab-1" onchange="onTopTabPick()"></select>
+          </div>
+          <div>
+            <label>3rd tab</label>
+            <select id="top-tab-2" onchange="onTopTabPick()"></select>
+          </div>
+        </div>
+        <button class="btn secondary full" onclick="saveTopTabs()">Save tab layout</button>
+        <div class="status" id="top-tabs-status"></div>
+      </section>
+
+      <section>
         <p class="sec-title">1 · Your shift types</p>
         <div class="row">
           <div>
@@ -2225,13 +2246,93 @@ async function checkExistingSession(){
 }
 
 // ---------- TABS ----------
-const MENU_TABS = ['rota', 'ratings', 'templates', 'admintemplates', 'account', 'admin'];
+// Which 3 tabs sit in the top bar is user-configurable (Account & Setup); every
+// other tab (including admin-only ones) lives in the ☰ menu.
+const DEFAULT_TOP_TABS = ['calendar', 'friends', 'holidays'];
+const CUSTOMIZABLE_TABS = ['calendar', 'friends', 'holidays', 'rota', 'ratings', 'templates', 'account'];
+const TAB_LABELS = {
+  calendar: 'My Calendar', friends: 'People', holidays: 'Holidays',
+  rota: 'Rota', ratings: 'Ratings', templates: 'Templates', account: 'Account & Setup'
+};
+let topTabs = DEFAULT_TOP_TABS.slice();
+
+function normalizeTopTabs(arr){
+  if(Array.isArray(arr) && arr.length === 3 && new Set(arr).size === 3 && arr.every(t => CUSTOMIZABLE_TABS.includes(t))){
+    return arr.slice();
+  }
+  return DEFAULT_TOP_TABS.slice();
+}
+
+// Moves the tab buttons between the top bar and the ☰ menu to match `topTabs`.
+// Safe to call repeatedly — always rebuilds both from scratch.
+function applyTopTabs(){
+  const tabbar = document.querySelector('.tabbar');
+  const menuPanel = document.getElementById('menu-panel');
+  const hamburger = document.getElementById('menu-toggle-btn');
+  if(!tabbar || !menuPanel || !hamburger) return;
+  topTabs.forEach(key=>{
+    const btn = document.querySelector('.tab-btn[data-tab="' + key + '"]');
+    if(btn) tabbar.insertBefore(btn, hamburger);
+  });
+  CUSTOMIZABLE_TABS.filter(key => !topTabs.includes(key)).forEach(key=>{
+    const btn = document.querySelector('.tab-btn[data-tab="' + key + '"]');
+    if(btn) menuPanel.appendChild(btn);
+  });
+  // Admin-only tabs always stay in the menu, at the bottom.
+  const adminTplBtn = document.getElementById('admin-templates-tab-btn');
+  const adminBtn = document.getElementById('admin-tab-btn');
+  if(adminTplBtn) menuPanel.appendChild(adminTplBtn);
+  if(adminBtn) menuPanel.appendChild(adminBtn);
+}
+
+function populateTopTabSelects(){
+  for(let i=0; i<3; i++){
+    const sel = document.getElementById('top-tab-' + i);
+    if(!sel) continue;
+    sel.innerHTML = CUSTOMIZABLE_TABS.map(key => '<option value="' + key + '">' + TAB_LABELS[key] + '</option>').join('');
+    sel.value = topTabs[i];
+  }
+}
+
+function onTopTabPick(){
+  const statusEl = document.getElementById('top-tabs-status');
+  const picked = [0,1,2].map(i => document.getElementById('top-tab-' + i).value);
+  if(new Set(picked).size !== 3){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Pick 3 different tabs.';
+  } else {
+    statusEl.textContent = '';
+  }
+}
+
+async function saveTopTabs(){
+  const statusEl = document.getElementById('top-tabs-status');
+  const picked = [0,1,2].map(i => document.getElementById('top-tab-' + i).value);
+  if(new Set(picked).size !== 3){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Pick 3 different tabs.';
+    return;
+  }
+  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
+  const { error } = await sb.from('profiles').update({ top_tabs: picked }).eq('id', currentUser.id);
+  if(error){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = /column|top_tabs/i.test(error.message)
+      ? 'Needs a one-off database update — run: alter table public.profiles add column if not exists top_tabs text[];'
+      : error.message;
+    return;
+  }
+  topTabs = picked;
+  applyTopTabs();
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = 'Saved — your top tabs are updated.';
+}
 
 function switchTab(tab){
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + tab));
   const menuBtn = document.getElementById('menu-toggle-btn');
-  if(menuBtn) menuBtn.classList.toggle('active', MENU_TABS.includes(tab));
+  if(menuBtn) menuBtn.classList.toggle('active', !topTabs.includes(tab));
   closeMenu();
 }
 
@@ -2266,7 +2367,7 @@ async function loadAccountData(){
     sb.from('rota_settings').select('*').eq('user_id', currentUser.id).maybeSingle(),
     sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date'),
     sb.from('pay_rates').select('*').eq('user_id', currentUser.id).maybeSingle(),
-    sb.from('profiles').select('is_admin,username').eq('id', currentUser.id).maybeSingle()
+    sb.from('profiles').select('is_admin,username,top_tabs').eq('id', currentUser.id).maybeSingle()
   ]);
   shiftTypes = stRes.data || [];
   // Separate shift templates from rota templates
@@ -2292,6 +2393,9 @@ async function loadAccountData(){
   document.getElementById('admin-templates-tab-btn').style.display = isAdmin ? '' : 'none';
   document.getElementById('admin-tab-btn').style.display = isAdmin ? '' : 'none';
   if(isAdmin) renderRtplGrid();
+  topTabs = normalizeTopTabs(profileRes.data && profileRes.data.top_tabs);
+  applyTopTabs();
+  populateTopTabSelects();
   if(payRes.data){
     payRates = {
       enabled: payRes.data.enabled || false,
