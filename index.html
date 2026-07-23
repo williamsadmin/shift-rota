@@ -105,6 +105,10 @@
   .day-label{font-size:10px;color:var(--text-dim);text-align:center;text-transform:uppercase;letter-spacing:.05em;}
   .week-marker{grid-column:1/-1;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.1em;color:var(--text-dim);margin-top:8px;text-transform:uppercase;}
   .day-cell select{width:100%;padding:8px 4px;font-size:11px;text-align:center;border-radius:6px;font-weight:600;appearance:none;-webkit-appearance:none;}
+  .star-picker{display:flex;gap:4px;}
+  .star-picker button{background:none;border:none;font-size:26px;line-height:1;cursor:pointer;color:var(--border);padding:2px;}
+  .star-picker button.filled{color:var(--amber);}
+  .best-shift-cell{background:var(--surface-alt);border:1px solid var(--border);border-radius:7px;padding:8px 4px;text-align:center;}
   .help{font-size:12px;color:var(--text-dim);line-height:1.5;margin-top:10px;}
   .status{font-size:12px;min-height:16px;margin-top:8px;}
   .empty{color:var(--text-dim);font-size:13px;}
@@ -199,6 +203,7 @@
   </div>
   <div class="menu-panel" id="menu-panel" style="display:none;">
     <button class="tab-btn" data-tab="rota" onclick="switchTab('rota')">Rota</button>
+    <button class="tab-btn" data-tab="ratings" onclick="switchTab('ratings')">Ratings</button>
     <button class="tab-btn" data-tab="templates" onclick="switchTab('templates')">Templates</button>
     <button class="tab-btn" data-tab="account" onclick="switchTab('account')">Account &amp; Setup</button>
     <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
@@ -403,6 +408,54 @@
         </div>
         <div id="friend-calendar-list"></div>
         <div class="leg-summary" id="friend-day-detail-panel" style="display:none;margin-top:14px;"></div>
+      </section>
+    </div>
+    <div class="tab-panel" id="tab-ratings">
+      <header style="margin-bottom:16px;">
+        <p class="eyebrow">Ratings</p>
+        <h1>Rate your shifts</h1>
+        <p class="sub">Rate a day's shift and the bus you drove it in — just for you. See your favourites below.</p>
+      </header>
+
+      <section>
+        <p class="sec-title">Rate a day</p>
+        <div class="row">
+          <div style="max-width:200px;"><label>Date</label><input type="date" id="rate-date" onchange="onRateDateChange()"></div>
+        </div>
+        <p class="help" id="rate-shift-label" style="margin-top:0;">Pick a date to rate its shift.</p>
+        <div style="margin-bottom:12px;">
+          <label>Shift rating</label>
+          <div id="rate-shift-stars" class="star-picker"></div>
+          <input type="hidden" id="rate-shift-value" value="">
+        </div>
+        <div class="row">
+          <div><label>Bus fleet number (optional)</label><input type="text" id="rate-bus-number" placeholder="e.g. 501"></div>
+        </div>
+        <div style="margin-bottom:12px;">
+          <label>Bus rating</label>
+          <div id="rate-bus-stars" class="star-picker"></div>
+          <input type="hidden" id="rate-bus-value" value="">
+        </div>
+        <button class="btn full" onclick="saveShiftRating()">Save rating</button>
+        <div class="status" id="rate-status"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Best shift by day of the week</p>
+        <p class="help" style="margin-top:0;">Your highest-rated shift for each weekday, from every rating you've made.</p>
+        <div id="best-shift-grid" class="grid"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Your top 3 buses</p>
+        <div id="top-buses-list"></div>
+      </section>
+
+      <section>
+        <details class="collapsible-section">
+          <summary class="sec-title">Your ratings</summary>
+          <div id="ratings-list" style="margin-top:12px;"></div>
+        </details>
       </section>
     </div>
     <div class="tab-panel" id="tab-templates">
@@ -2136,7 +2189,7 @@ async function checkExistingSession(){
 }
 
 // ---------- TABS ----------
-const MENU_TABS = ['rota', 'templates', 'account', 'admin'];
+const MENU_TABS = ['rota', 'ratings', 'templates', 'account', 'admin'];
 
 function switchTab(tab){
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -2265,6 +2318,8 @@ async function loadAccountData(){
   renderHolidayList();
   renderCalendarTab();
   loadPeopleTab();
+  await loadRatings();
+  renderRatingsTab();
   if(isAdmin) loadAdminTab();
 }
 
@@ -3736,6 +3791,186 @@ async function saveOriginalRota(){
     : 'Saved — new rota takes over from ' + fmtDateLabel(editingRotaVersion) + '.';
   await persistRota(statusEl, msg);
   renderCalendarTab();
+}
+
+// ---------- Ratings (personal — rate a day's shift + the bus driven) ----------
+let myRatings = [];
+
+async function loadRatings(){
+  const { data, error } = await sb.from('shift_ratings').select('*').eq('user_id', currentUser.id);
+  myRatings = error ? [] : (data || []);
+}
+
+function renderStarPicker(containerId, hiddenId){
+  const el = document.getElementById(containerId);
+  if(!el) return;
+  const val = parseInt(document.getElementById(hiddenId).value, 10) || 0;
+  el.innerHTML = '';
+  for(let i=1; i<=5; i++){
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = i <= val ? '★' : '☆';
+    btn.className = i <= val ? 'filled' : '';
+    btn.onclick = ()=>{ document.getElementById(hiddenId).value = (val === i ? 0 : i); renderStarPicker(containerId, hiddenId); };
+    el.appendChild(btn);
+  }
+}
+
+function shiftNameForRating(dateStr){
+  const shiftId = effectiveShift(dateStr);
+  if(shiftId === '__holiday__') return 'Holiday';
+  if(shiftId === '') return 'Rest day';
+  const shift = shiftTypes.find(s => s.id === shiftId);
+  return shift ? shift.name : '';
+}
+
+function onRateDateChange(){
+  const d = document.getElementById('rate-date').value;
+  const labelEl = document.getElementById('rate-shift-label');
+  if(!d){
+    labelEl.textContent = 'Pick a date to rate its shift.';
+    document.getElementById('rate-shift-value').value = '';
+    document.getElementById('rate-bus-number').value = '';
+    document.getElementById('rate-bus-value').value = '';
+    renderStarPicker('rate-shift-stars', 'rate-shift-value');
+    renderStarPicker('rate-bus-stars', 'rate-bus-value');
+    return;
+  }
+  const shiftName = shiftNameForRating(d);
+  labelEl.innerHTML = shiftName
+    ? 'Shift: <strong style="color:var(--text);">' + escapeHtml(shiftName) + '</strong>'
+    : 'No shift is set for that day yet.';
+  const existing = myRatings.find(r => r.rating_date === d);
+  document.getElementById('rate-shift-value').value = existing ? existing.shift_rating : '';
+  document.getElementById('rate-bus-number').value = existing ? (existing.bus_number || '') : '';
+  document.getElementById('rate-bus-value').value = existing ? (existing.bus_rating || '') : '';
+  renderStarPicker('rate-shift-stars', 'rate-shift-value');
+  renderStarPicker('rate-bus-stars', 'rate-bus-value');
+}
+
+async function saveShiftRating(){
+  const statusEl = document.getElementById('rate-status');
+  const d = document.getElementById('rate-date').value;
+  if(!d){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Pick a date first.'; return; }
+  const shiftName = shiftNameForRating(d);
+  if(!shiftName){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'No shift is set for that day.'; return; }
+  const shiftRating = parseInt(document.getElementById('rate-shift-value').value, 10) || 0;
+  if(!shiftRating){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Rate the shift (tap a star).'; return; }
+  const busNumber = document.getElementById('rate-bus-number').value.trim();
+  const busRating = parseInt(document.getElementById('rate-bus-value').value, 10) || 0;
+  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
+  const { error } = await sb.from('shift_ratings').upsert([{
+    user_id: currentUser.id, rating_date: d, shift_name: shiftName,
+    shift_rating: shiftRating, bus_number: busNumber || null, bus_rating: busNumber ? (busRating || null) : null
+  }], { onConflict: 'user_id,rating_date' });
+  if(error){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = /relation|shift_ratings|does not exist/i.test(error.message)
+      ? 'Ratings need a one-off database update — run the shift_ratings block from db-setup.sql.'
+      : error.message;
+    return;
+  }
+  statusEl.style.color = 'var(--teal)'; statusEl.textContent = 'Saved.';
+  await loadRatings();
+  renderRatingsTab();
+}
+
+async function deleteRating(dateStr){
+  if(!confirm('Delete this rating?')) return;
+  await sb.from('shift_ratings').delete().eq('user_id', currentUser.id).eq('rating_date', dateStr);
+  await loadRatings();
+  renderRatingsTab();
+}
+
+function renderRatingsList(){
+  const el = document.getElementById('ratings-list');
+  if(!el) return;
+  if(myRatings.length === 0){ el.innerHTML = '<p class="empty">No ratings yet.</p>'; return; }
+  el.innerHTML = '';
+  myRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
+    const div = document.createElement('div'); div.className = 'off-item';
+    const dt = new Date(r.rating_date + 'T00:00:00');
+    const stars = '★'.repeat(r.shift_rating) + '☆'.repeat(5 - r.shift_rating);
+    let busPart = '';
+    if(r.bus_number){
+      const busStars = r.bus_rating ? ('★'.repeat(r.bus_rating) + '☆'.repeat(5 - r.bus_rating)) : '';
+      busPart = ' · Bus ' + escapeHtml(r.bus_number) + (busStars ? ' ' + busStars : '');
+    }
+    div.innerHTML = '<span>' + escapeHtml(dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}))
+      + ' — <strong style="color:var(--text);">' + escapeHtml(r.shift_name) + '</strong> ' + stars + busPart + '</span>';
+    const rm = document.createElement('button'); rm.textContent = 'Delete'; rm.style.color = 'var(--danger)';
+    rm.onclick = ()=>deleteRating(r.rating_date);
+    div.appendChild(rm); el.appendChild(div);
+  });
+}
+
+function renderBestShiftByDay(){
+  const el = document.getElementById('best-shift-grid');
+  if(!el) return;
+  const buckets = Array.from({length:7}, ()=>({}));
+  myRatings.forEach(r=>{
+    if(!r.shift_rating) return;
+    const dow = new Date(r.rating_date + 'T00:00:00').getDay();
+    const b = buckets[dow];
+    if(!b[r.shift_name]) b[r.shift_name] = { sum:0, count:0 };
+    b[r.shift_name].sum += r.shift_rating;
+    b[r.shift_name].count++;
+  });
+  el.innerHTML = '';
+  for(let d=0; d<7; d++){
+    const cell = document.createElement('div'); cell.className = 'best-shift-cell';
+    const label = document.createElement('div'); label.className = 'day-label'; label.textContent = DAY_LABELS[d];
+    cell.appendChild(label);
+    const entries = Object.entries(buckets[d]);
+    if(entries.length === 0){
+      const p = document.createElement('div'); p.className = 'help'; p.style.margin = '4px 0 0'; p.textContent = '—';
+      cell.appendChild(p);
+    } else {
+      entries.sort((a, b2)=> (b2[1].sum / b2[1].count) - (a[1].sum / a[1].count));
+      const [name, stat] = entries[0];
+      const avg = stat.sum / stat.count;
+      const nameEl = document.createElement('div');
+      nameEl.style.cssText = 'font-weight:700;color:var(--text);margin-top:4px;font-size:12px;word-break:break-word;';
+      nameEl.textContent = name;
+      const avgEl = document.createElement('div');
+      avgEl.style.cssText = 'color:var(--amber);font-size:11px;margin-top:2px;';
+      avgEl.textContent = avg.toFixed(1) + '★ (' + stat.count + ')';
+      cell.appendChild(nameEl); cell.appendChild(avgEl);
+    }
+    el.appendChild(cell);
+  }
+}
+
+function renderTopBuses(){
+  const el = document.getElementById('top-buses-list');
+  if(!el) return;
+  const buckets = {};
+  myRatings.forEach(r=>{
+    if(!r.bus_number || !r.bus_rating) return;
+    if(!buckets[r.bus_number]) buckets[r.bus_number] = { sum:0, count:0 };
+    buckets[r.bus_number].sum += r.bus_rating;
+    buckets[r.bus_number].count++;
+  });
+  const ranked = Object.entries(buckets)
+    .map(([num, stat]) => ({ num, avg: stat.sum / stat.count, count: stat.count }))
+    .sort((a, b)=> b.avg - a.avg)
+    .slice(0, 3);
+  if(ranked.length === 0){ el.innerHTML = '<p class="empty">Rate a bus to see your top 3 here.</p>'; return; }
+  el.innerHTML = '';
+  ranked.forEach((r, i)=>{
+    const div = document.createElement('div'); div.className = 'off-item';
+    div.innerHTML = '<span>#' + (i+1) + ' — <strong style="color:var(--text);">Bus ' + escapeHtml(r.num) + '</strong> · '
+      + r.avg.toFixed(1) + '★ (' + r.count + ' rating' + (r.count !== 1 ? 's' : '') + ')</span>';
+    el.appendChild(div);
+  });
+}
+
+function renderRatingsTab(){
+  renderRatingsList();
+  renderBestShiftByDay();
+  renderTopBuses();
+  renderStarPicker('rate-shift-stars', 'rate-shift-value');
+  renderStarPicker('rate-bus-stars', 'rate-bus-value');
 }
 
 function escapeHtml(str){

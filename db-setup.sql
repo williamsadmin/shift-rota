@@ -121,3 +121,22 @@ alter table public.overtime_requests enable row level security;
 drop policy if exists "Users manage own overtime" on public.overtime_requests;
 create policy "Users manage own overtime" on public.overtime_requests
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------
+-- 6. Shift & bus ratings (personal — one rating per user per day)
+-- ---------------------------------------------------------------------
+create table if not exists public.shift_ratings (
+  user_id      uuid not null references auth.users(id) on delete cascade,
+  rating_date  date not null,
+  shift_name   text not null,
+  shift_rating smallint not null check (shift_rating between 1 and 5),
+  bus_number   text,
+  bus_rating   smallint check (bus_rating between 1 and 5),
+  created_at   timestamptz default now(),
+  primary key (user_id, rating_date)
+);
+alter table public.shift_ratings enable row level security;
+
+drop policy if exists "Users manage own ratings" on public.shift_ratings;
+create policy "Users manage own ratings" on public.shift_ratings
+  for all using (user_id = auth.uid()) with check (user_id = auth.uid());
