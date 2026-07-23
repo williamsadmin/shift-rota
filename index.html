@@ -1396,18 +1396,28 @@ function startSwapFromDay(dateStr){
   if(details) details.scrollIntoView({behavior:'smooth', block:'start'});
 }
 
-// Overtime is stored as an override pointing at an all-day "Requested Overtime"
-// shift, so it shows on the calendar as the day's entry and flows into the .ics
+// Overtime is stored as an override pointing at an all-day "Req. OT" shift,
+// so it shows on the calendar as the day's entry and flows into the .ics
 // export (which renders all-day shifts, like A/R).
 function refreshOvertimeSet(){
   overtimeRequests = new Set(allOverrides.filter(o => o.source === 'overtime').map(o => o.override_date));
 }
 
 async function ensureOvertimeShift(){
-  const existing = shiftTypes.find(st => (st.name || '').toLowerCase().includes('requested overtime'));
+  const OT_NAME = '💪 Req. OT';
+  const existing = shiftTypes.find(st => (st.name || '').trim() === OT_NAME);
   if(existing) return existing.id;
+  // Rename an older-style marker in place (shorter name fits the page better)
+  // rather than creating a duplicate — the shift id stays the same, so any
+  // days already pointing at it keep working.
+  const legacy = shiftTypes.find(st => (st.name || '').toLowerCase().includes('requested overtime'));
+  if(legacy){
+    const { error: renameErr } = await sb.from('shift_types').update({ name: OT_NAME }).eq('id', legacy.id);
+    if(!renameErr) legacy.name = OT_NAME;
+    return legacy.id;
+  }
   const { data, error } = await sb.from('shift_types').insert({
-    owner_id: currentUser.id, is_template: false, name: '💪 Requested Overtime',
+    owner_id: currentUser.id, is_template: false, name: OT_NAME,
     all_day: true, start_time: '', end_time: '', paid_hours: '', description: '',
     color: '#F2A93B', legs_data: null, allowed_days: null
   }).select().single();
