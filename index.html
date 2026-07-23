@@ -205,6 +205,7 @@
     <button class="tab-btn" data-tab="rota" onclick="switchTab('rota')">Rota</button>
     <button class="tab-btn" data-tab="ratings" onclick="switchTab('ratings')">Ratings</button>
     <button class="tab-btn" data-tab="templates" onclick="switchTab('templates')">Templates</button>
+    <button class="tab-btn" data-tab="admintemplates" id="admin-templates-tab-btn" style="display:none;" onclick="switchTab('admintemplates')">Admin Templates</button>
     <button class="tab-btn" data-tab="account" onclick="switchTab('account')">Account &amp; Setup</button>
     <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
   </div>
@@ -465,7 +466,48 @@
         <p class="sub" id="templates-sub">Add any of these straight into your own rota — no retyping times or rates.</p>
       </header>
 
-      <section id="pdf-import-section" style="display:none;">
+      <section>
+        <p class="sec-title">Available shift templates</p>
+        <div class="row">
+          <div style="max-width:220px;">
+            <label>Filter by category</label>
+            <select id="tpl-filter" onchange="renderTemplatesBrowseList()">
+              <option value="">— Select a category —</option>
+              <option value="__all__">All</option>
+            </select>
+          </div>
+          <div style="max-width:160px;">
+            <label>Filter by day</label>
+            <select id="tpl-day-filter" onchange="renderTemplatesBrowseList()">
+              <option value="">All days</option>
+              <option value="0">Sun</option>
+              <option value="1">Mon</option>
+              <option value="2">Tue</option>
+              <option value="3">Wed</option>
+              <option value="4">Thu</option>
+              <option value="5">Fri</option>
+              <option value="6">Sat</option>
+            </select>
+          </div>
+        </div>
+        <div id="templates-browse-list"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Rota templates</p>
+        <p class="help" style="margin-top:0;">Apply a full pre-built rota to your account — adds any required shifts to your collection and loads the complete pattern.</p>
+        <div id="rota-templates-list"></div>
+      </section>
+    </div>
+
+    <div class="tab-panel" id="tab-admintemplates">
+      <header style="margin-bottom:16px;">
+        <p class="eyebrow">Admin Templates</p>
+        <h1>Create &amp; import</h1>
+        <p class="sub">Build shift and rota templates, or import them from a PDF/text — everyone browses and adds from the Templates tab.</p>
+      </header>
+
+      <section id="pdf-import-section">
         <p class="sec-title">Import duty sheets from PDF</p>
         <p class="help" style="margin-top:0;margin-bottom:12px;">Upload one or more duty PDFs (like a trentbarton-style DYxx sheet). Each one is parsed into a duty board automatically and added as a shared template — review and edit before importing. Once created, any user can add it to their own rota as normal.</p>
         <div class="row">
@@ -487,7 +529,7 @@
         <div class="status" id="pdf-import-status"></div>
       </section>
 
-      <section id="rota-import-section" style="display:none;">
+      <section id="rota-import-section">
         <p class="sec-title">Import a full rota</p>
         <p class="help" style="margin-top:0;margin-bottom:10px;">Load a rota PDF (or paste it as text) to fill the rota template builder below automatically. Format: <strong>one line per week</strong>, seven days <strong>Sun → Sat</strong> separated by commas or tabs, each day a shift code with optional times like <code>IB43 0737-1744</code> — <code>REST</code> or a gap for a day off.</p>
         <div class="row">
@@ -503,9 +545,9 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="status" id="tpl-import-status"></div>
       </section>
 
-      <section id="template-create-section" style="display:none;">
+      <section id="template-create-section">
         <p class="sec-title">Create a new template</p>
-        <p class="help" style="margin-top:0;margin-bottom:12px;">Only your account can do this — everyone else just browses and adds.</p>
+        <p class="help" style="margin-top:0;margin-bottom:12px;">Everyone else just browses and adds.</p>
         <div class="row">
           <div>
             <label>Copy from an existing template (optional)</label>
@@ -559,7 +601,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="status" id="tpl-create-status"></div>
       </section>
 
-      <section id="rota-template-create-section" style="display:none;">
+      <section id="rota-template-create-section">
         <p class="sec-title">Create a rota template</p>
         <p class="help" style="margin-top:0;margin-bottom:12px;">Build a full rota pattern from shared shift templates — anyone can apply it to their account instantly.</p>
         <div class="row">
@@ -594,39 +636,6 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <button class="btn full" id="rtpl-submit-btn" onclick="saveRotaTemplate()">Create rota template</button>
         <button class="btn secondary full" id="rtpl-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelRotaTemplateEdit()">Cancel edit</button>
         <div class="status" id="rtpl-status"></div>
-      </section>
-
-      <section>
-        <p class="sec-title">Available shift templates</p>
-        <div class="row">
-          <div style="max-width:220px;">
-            <label>Filter by category</label>
-            <select id="tpl-filter" onchange="renderTemplatesBrowseList()">
-              <option value="">— Select a category —</option>
-              <option value="__all__">All</option>
-            </select>
-          </div>
-          <div style="max-width:160px;">
-            <label>Filter by day</label>
-            <select id="tpl-day-filter" onchange="renderTemplatesBrowseList()">
-              <option value="">All days</option>
-              <option value="0">Sun</option>
-              <option value="1">Mon</option>
-              <option value="2">Tue</option>
-              <option value="3">Wed</option>
-              <option value="4">Thu</option>
-              <option value="5">Fri</option>
-              <option value="6">Sat</option>
-            </select>
-          </div>
-        </div>
-        <div id="templates-browse-list"></div>
-      </section>
-
-      <section>
-        <p class="sec-title">Rota templates</p>
-        <p class="help" style="margin-top:0;">Apply a full pre-built rota to your account — adds any required shifts to your collection and loads the complete pattern.</p>
-        <div id="rota-templates-list"></div>
       </section>
     </div>
 
@@ -2201,7 +2210,7 @@ async function checkExistingSession(){
 }
 
 // ---------- TABS ----------
-const MENU_TABS = ['rota', 'ratings', 'templates', 'account', 'admin'];
+const MENU_TABS = ['rota', 'ratings', 'templates', 'admintemplates', 'account', 'admin'];
 
 function switchTab(tab){
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -2265,18 +2274,9 @@ async function loadAccountData(){
     }
   }
   document.getElementById('username-input').value = myUsername;
-  document.getElementById('template-create-section').style.display = isAdmin ? 'block' : 'none';
-  document.getElementById('rota-import-section').style.display = isAdmin ? 'block' : 'none';
-  document.getElementById('rota-template-create-section').style.display = isAdmin ? 'block' : 'none';
-  document.getElementById('pdf-import-section').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('admin-templates-tab-btn').style.display = isAdmin ? '' : 'none';
   document.getElementById('admin-tab-btn').style.display = isAdmin ? '' : 'none';
   if(isAdmin) renderRtplGrid();
-  const tplSub = document.getElementById('templates-sub');
-  if(tplSub){
-    tplSub.textContent = isAdmin
-      ? 'Create shared shift types and full rota templates here, or add any existing one straight into your own rota.'
-      : 'Add any of these straight into your own rota — no retyping times or rates.';
-  }
   if(payRes.data){
     payRates = {
       enabled: payRes.data.enabled || false,
@@ -2515,6 +2515,7 @@ function startEditShiftType(s){
 }
 
 function startEditTemplate(t){
+  switchTab('admintemplates');
   editingItem.tpl = t.id;
   document.getElementById('tpl-name').value = t.name;
   document.getElementById('tpl-color').value = t.color || '#43C6AC';
@@ -4107,6 +4108,7 @@ async function saveRotaTemplate(){
 }
 
 function startEditRotaTemplate(rtpl){
+  switchTab('admintemplates');
   editingRtpl = rtpl.id;
   document.getElementById('rtpl-name').value = rtpl.name;
   document.getElementById('rtpl-desc-text').value = rtpl.description || '';
