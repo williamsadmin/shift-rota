@@ -205,6 +205,7 @@
     <button class="tab-btn" data-tab="rota" onclick="switchTab('rota')">Rota</button>
     <button class="tab-btn" data-tab="ratings" onclick="switchTab('ratings')">Ratings</button>
     <button class="tab-btn" data-tab="templates" onclick="switchTab('templates')">Templates</button>
+    <button class="tab-btn" data-tab="admintemplates" id="admin-templates-tab-btn" style="display:none;" onclick="switchTab('admintemplates')">Admin Templates</button>
     <button class="tab-btn" data-tab="account" onclick="switchTab('account')">Account &amp; Setup</button>
     <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
   </div>
@@ -414,11 +415,11 @@
       <header style="margin-bottom:16px;">
         <p class="eyebrow">Ratings</p>
         <h1>Rate your shifts</h1>
-        <p class="sub">Rate a day's shift and the bus you drove it in — just for you. See your favourites below.</p>
+        <p class="sub">Rate a day's shift, and separately rate any bus you've driven — just for you. Do either one on its own. See your favourites below.</p>
       </header>
 
       <section>
-        <p class="sec-title">Rate a day</p>
+        <p class="sec-title">Rate a shift</p>
         <div class="row">
           <div style="max-width:200px;"><label>Date</label><input type="date" id="rate-date" onchange="onRateDateChange()"></div>
         </div>
@@ -428,21 +429,29 @@
           <div id="rate-shift-stars" class="star-picker"></div>
           <input type="hidden" id="rate-shift-value" value="">
         </div>
+        <button class="btn full" onclick="saveShiftRating()">Save shift rating</button>
+        <div class="status" id="rate-shift-status"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Rate a bus</p>
+        <p class="help" style="margin-top:0;">Independent of the shift rating above — log any bus you've driven, any day. You can rate more than one bus on the same day.</p>
         <div class="row">
-          <div><label>Bus fleet number (optional)</label><input type="text" id="rate-bus-number" placeholder="e.g. 501"></div>
+          <div style="max-width:200px;"><label>Date</label><input type="date" id="bus-rate-date" onchange="onBusRateFormChange()"></div>
+          <div><label>Bus fleet number</label><input type="text" id="bus-rate-number" placeholder="e.g. 501" oninput="onBusRateFormChange()"></div>
         </div>
         <div style="margin-bottom:12px;">
           <label>Bus rating</label>
           <div id="rate-bus-stars" class="star-picker"></div>
           <input type="hidden" id="rate-bus-value" value="">
         </div>
-        <button class="btn full" onclick="saveShiftRating()">Save rating</button>
-        <div class="status" id="rate-status"></div>
+        <button class="btn full" onclick="saveBusRating()">Save bus rating</button>
+        <div class="status" id="rate-bus-status"></div>
       </section>
 
       <section>
         <p class="sec-title">Best shift by day of the week</p>
-        <p class="help" style="margin-top:0;">Your highest-rated shift for each weekday, from every rating you've made.</p>
+        <p class="help" style="margin-top:0;">Your highest-rated shift for each weekday, from every shift rating you've made.</p>
         <div id="best-shift-grid" class="grid"></div>
       </section>
 
@@ -453,8 +462,15 @@
 
       <section>
         <details class="collapsible-section">
-          <summary class="sec-title">Your ratings</summary>
-          <div id="ratings-list" style="margin-top:12px;"></div>
+          <summary class="sec-title">Your shift ratings</summary>
+          <div id="shift-ratings-list" style="margin-top:12px;"></div>
+        </details>
+      </section>
+
+      <section>
+        <details class="collapsible-section">
+          <summary class="sec-title">Your bus ratings</summary>
+          <div id="bus-ratings-list" style="margin-top:12px;"></div>
         </details>
       </section>
     </div>
@@ -465,7 +481,48 @@
         <p class="sub" id="templates-sub">Add any of these straight into your own rota — no retyping times or rates.</p>
       </header>
 
-      <section id="pdf-import-section" style="display:none;">
+      <section>
+        <p class="sec-title">Available shift templates</p>
+        <div class="row">
+          <div style="max-width:220px;">
+            <label>Filter by category</label>
+            <select id="tpl-filter" onchange="renderTemplatesBrowseList()">
+              <option value="">— Select a category —</option>
+              <option value="__all__">All</option>
+            </select>
+          </div>
+          <div style="max-width:160px;">
+            <label>Filter by day</label>
+            <select id="tpl-day-filter" onchange="renderTemplatesBrowseList()">
+              <option value="">All days</option>
+              <option value="0">Sun</option>
+              <option value="1">Mon</option>
+              <option value="2">Tue</option>
+              <option value="3">Wed</option>
+              <option value="4">Thu</option>
+              <option value="5">Fri</option>
+              <option value="6">Sat</option>
+            </select>
+          </div>
+        </div>
+        <div id="templates-browse-list"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Rota templates</p>
+        <p class="help" style="margin-top:0;">Apply a full pre-built rota to your account — adds any required shifts to your collection and loads the complete pattern.</p>
+        <div id="rota-templates-list"></div>
+      </section>
+    </div>
+
+    <div class="tab-panel" id="tab-admintemplates">
+      <header style="margin-bottom:16px;">
+        <p class="eyebrow">Admin Templates</p>
+        <h1>Create &amp; import</h1>
+        <p class="sub">Build shift and rota templates, or import them from a PDF/text — everyone browses and adds from the Templates tab.</p>
+      </header>
+
+      <section id="pdf-import-section">
         <p class="sec-title">Import duty sheets from PDF</p>
         <p class="help" style="margin-top:0;margin-bottom:12px;">Upload one or more duty PDFs (like a trentbarton-style DYxx sheet). Each one is parsed into a duty board automatically and added as a shared template — review and edit before importing. Once created, any user can add it to their own rota as normal.</p>
         <div class="row">
@@ -487,7 +544,7 @@
         <div class="status" id="pdf-import-status"></div>
       </section>
 
-      <section id="rota-import-section" style="display:none;">
+      <section id="rota-import-section">
         <p class="sec-title">Import a full rota</p>
         <p class="help" style="margin-top:0;margin-bottom:10px;">Load a rota PDF (or paste it as text) to fill the rota template builder below automatically. Format: <strong>one line per week</strong>, seven days <strong>Sun → Sat</strong> separated by commas or tabs, each day a shift code with optional times like <code>IB43 0737-1744</code> — <code>REST</code> or a gap for a day off.</p>
         <div class="row">
@@ -503,9 +560,9 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="status" id="tpl-import-status"></div>
       </section>
 
-      <section id="template-create-section" style="display:none;">
+      <section id="template-create-section">
         <p class="sec-title">Create a new template</p>
-        <p class="help" style="margin-top:0;margin-bottom:12px;">Only your account can do this — everyone else just browses and adds.</p>
+        <p class="help" style="margin-top:0;margin-bottom:12px;">Everyone else just browses and adds.</p>
         <div class="row">
           <div>
             <label>Copy from an existing template (optional)</label>
@@ -559,7 +616,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="status" id="tpl-create-status"></div>
       </section>
 
-      <section id="rota-template-create-section" style="display:none;">
+      <section id="rota-template-create-section">
         <p class="sec-title">Create a rota template</p>
         <p class="help" style="margin-top:0;margin-bottom:12px;">Build a full rota pattern from shared shift templates — anyone can apply it to their account instantly.</p>
         <div class="row">
@@ -594,39 +651,6 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <button class="btn full" id="rtpl-submit-btn" onclick="saveRotaTemplate()">Create rota template</button>
         <button class="btn secondary full" id="rtpl-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelRotaTemplateEdit()">Cancel edit</button>
         <div class="status" id="rtpl-status"></div>
-      </section>
-
-      <section>
-        <p class="sec-title">Available shift templates</p>
-        <div class="row">
-          <div style="max-width:220px;">
-            <label>Filter by category</label>
-            <select id="tpl-filter" onchange="renderTemplatesBrowseList()">
-              <option value="">— Select a category —</option>
-              <option value="__all__">All</option>
-            </select>
-          </div>
-          <div style="max-width:160px;">
-            <label>Filter by day</label>
-            <select id="tpl-day-filter" onchange="renderTemplatesBrowseList()">
-              <option value="">All days</option>
-              <option value="0">Sun</option>
-              <option value="1">Mon</option>
-              <option value="2">Tue</option>
-              <option value="3">Wed</option>
-              <option value="4">Thu</option>
-              <option value="5">Fri</option>
-              <option value="6">Sat</option>
-            </select>
-          </div>
-        </div>
-        <div id="templates-browse-list"></div>
-      </section>
-
-      <section>
-        <p class="sec-title">Rota templates</p>
-        <p class="help" style="margin-top:0;">Apply a full pre-built rota to your account — adds any required shifts to your collection and loads the complete pattern.</p>
-        <div id="rota-templates-list"></div>
       </section>
     </div>
 
@@ -2201,7 +2225,7 @@ async function checkExistingSession(){
 }
 
 // ---------- TABS ----------
-const MENU_TABS = ['rota', 'ratings', 'templates', 'account', 'admin'];
+const MENU_TABS = ['rota', 'ratings', 'templates', 'admintemplates', 'account', 'admin'];
 
 function switchTab(tab){
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
@@ -2265,18 +2289,9 @@ async function loadAccountData(){
     }
   }
   document.getElementById('username-input').value = myUsername;
-  document.getElementById('template-create-section').style.display = isAdmin ? 'block' : 'none';
-  document.getElementById('rota-import-section').style.display = isAdmin ? 'block' : 'none';
-  document.getElementById('rota-template-create-section').style.display = isAdmin ? 'block' : 'none';
-  document.getElementById('pdf-import-section').style.display = isAdmin ? 'block' : 'none';
+  document.getElementById('admin-templates-tab-btn').style.display = isAdmin ? '' : 'none';
   document.getElementById('admin-tab-btn').style.display = isAdmin ? '' : 'none';
   if(isAdmin) renderRtplGrid();
-  const tplSub = document.getElementById('templates-sub');
-  if(tplSub){
-    tplSub.textContent = isAdmin
-      ? 'Create shared shift types and full rota templates here, or add any existing one straight into your own rota.'
-      : 'Add any of these straight into your own rota — no retyping times or rates.';
-  }
   if(payRes.data){
     payRates = {
       enabled: payRes.data.enabled || false,
@@ -2515,6 +2530,7 @@ function startEditShiftType(s){
 }
 
 function startEditTemplate(t){
+  switchTab('admintemplates');
   editingItem.tpl = t.id;
   document.getElementById('tpl-name').value = t.name;
   document.getElementById('tpl-color').value = t.color || '#43C6AC';
@@ -3805,12 +3821,17 @@ async function saveOriginalRota(){
   renderCalendarTab();
 }
 
-// ---------- Ratings (personal — rate a day's shift + the bus driven) ----------
-let myRatings = [];
+// ---------- Ratings (personal — shift ratings and bus ratings are fully independent) ----------
+let myShiftRatings = [];
+let myBusRatings = [];
 
 async function loadRatings(){
-  const { data, error } = await sb.from('shift_ratings').select('*').eq('user_id', currentUser.id);
-  myRatings = error ? [] : (data || []);
+  const [shiftRes, busRes] = await Promise.all([
+    sb.from('shift_ratings').select('*').eq('user_id', currentUser.id),
+    sb.from('bus_ratings').select('*').eq('user_id', currentUser.id)
+  ]);
+  myShiftRatings = shiftRes.error ? [] : (shiftRes.data || []);
+  myBusRatings = busRes.error ? [] : (busRes.data || []);
 }
 
 function renderStarPicker(containerId, hiddenId){
@@ -3836,44 +3857,36 @@ function shiftNameForRating(dateStr){
   return shift ? shift.name : '';
 }
 
+// ----- Shift rating -----
 function onRateDateChange(){
   const d = document.getElementById('rate-date').value;
   const labelEl = document.getElementById('rate-shift-label');
   if(!d){
     labelEl.textContent = 'Pick a date to rate its shift.';
     document.getElementById('rate-shift-value').value = '';
-    document.getElementById('rate-bus-number').value = '';
-    document.getElementById('rate-bus-value').value = '';
     renderStarPicker('rate-shift-stars', 'rate-shift-value');
-    renderStarPicker('rate-bus-stars', 'rate-bus-value');
     return;
   }
   const shiftName = shiftNameForRating(d);
   labelEl.innerHTML = shiftName
     ? 'Shift: <strong style="color:var(--text);">' + escapeHtml(shiftName) + '</strong>'
     : 'No shift is set for that day yet.';
-  const existing = myRatings.find(r => r.rating_date === d);
+  const existing = myShiftRatings.find(r => r.rating_date === d);
   document.getElementById('rate-shift-value').value = existing ? existing.shift_rating : '';
-  document.getElementById('rate-bus-number').value = existing ? (existing.bus_number || '') : '';
-  document.getElementById('rate-bus-value').value = existing ? (existing.bus_rating || '') : '';
   renderStarPicker('rate-shift-stars', 'rate-shift-value');
-  renderStarPicker('rate-bus-stars', 'rate-bus-value');
 }
 
 async function saveShiftRating(){
-  const statusEl = document.getElementById('rate-status');
+  const statusEl = document.getElementById('rate-shift-status');
   const d = document.getElementById('rate-date').value;
   if(!d){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Pick a date first.'; return; }
   const shiftName = shiftNameForRating(d);
   if(!shiftName){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'No shift is set for that day.'; return; }
   const shiftRating = parseInt(document.getElementById('rate-shift-value').value, 10) || 0;
   if(!shiftRating){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Rate the shift (tap a star).'; return; }
-  const busNumber = document.getElementById('rate-bus-number').value.trim();
-  const busRating = parseInt(document.getElementById('rate-bus-value').value, 10) || 0;
   statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
   const { error } = await sb.from('shift_ratings').upsert([{
-    user_id: currentUser.id, rating_date: d, shift_name: shiftName,
-    shift_rating: shiftRating, bus_number: busNumber || null, bus_rating: busNumber ? (busRating || null) : null
+    user_id: currentUser.id, rating_date: d, shift_name: shiftName, shift_rating: shiftRating
   }], { onConflict: 'user_id,rating_date' });
   if(error){
     statusEl.style.color = 'var(--danger)';
@@ -3887,31 +3900,26 @@ async function saveShiftRating(){
   renderRatingsTab();
 }
 
-async function deleteRating(dateStr){
-  if(!confirm('Delete this rating?')) return;
+async function deleteShiftRating(dateStr){
+  if(!confirm('Delete this shift rating?')) return;
   await sb.from('shift_ratings').delete().eq('user_id', currentUser.id).eq('rating_date', dateStr);
   await loadRatings();
   renderRatingsTab();
 }
 
-function renderRatingsList(){
-  const el = document.getElementById('ratings-list');
+function renderShiftRatingsList(){
+  const el = document.getElementById('shift-ratings-list');
   if(!el) return;
-  if(myRatings.length === 0){ el.innerHTML = '<p class="empty">No ratings yet.</p>'; return; }
+  if(myShiftRatings.length === 0){ el.innerHTML = '<p class="empty">No shift ratings yet.</p>'; return; }
   el.innerHTML = '';
-  myRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
+  myShiftRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
     const div = document.createElement('div'); div.className = 'off-item';
     const dt = new Date(r.rating_date + 'T00:00:00');
     const stars = '★'.repeat(r.shift_rating) + '☆'.repeat(5 - r.shift_rating);
-    let busPart = '';
-    if(r.bus_number){
-      const busStars = r.bus_rating ? ('★'.repeat(r.bus_rating) + '☆'.repeat(5 - r.bus_rating)) : '';
-      busPart = ' · Bus ' + escapeHtml(r.bus_number) + (busStars ? ' ' + busStars : '');
-    }
     div.innerHTML = '<span>' + escapeHtml(dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}))
-      + ' — <strong style="color:var(--text);">' + escapeHtml(r.shift_name) + '</strong> ' + stars + busPart + '</span>';
+      + ' — <strong style="color:var(--text);">' + escapeHtml(r.shift_name) + '</strong> ' + stars + '</span>';
     const rm = document.createElement('button'); rm.textContent = 'Delete'; rm.style.color = 'var(--danger)';
-    rm.onclick = ()=>deleteRating(r.rating_date);
+    rm.onclick = ()=>deleteShiftRating(r.rating_date);
     div.appendChild(rm); el.appendChild(div);
   });
 }
@@ -3920,7 +3928,7 @@ function renderBestShiftByDay(){
   const el = document.getElementById('best-shift-grid');
   if(!el) return;
   const buckets = Array.from({length:7}, ()=>({}));
-  myRatings.forEach(r=>{
+  myShiftRatings.forEach(r=>{
     if(!r.shift_rating) return;
     const dow = new Date(r.rating_date + 'T00:00:00').getDay();
     const b = buckets[dow];
@@ -3953,11 +3961,68 @@ function renderBestShiftByDay(){
   }
 }
 
+// ----- Bus rating -----
+function onBusRateFormChange(){
+  const d = document.getElementById('bus-rate-date').value;
+  const num = document.getElementById('bus-rate-number').value.trim();
+  const existing = (d && num) ? myBusRatings.find(r => r.rating_date === d && r.bus_number.toLowerCase() === num.toLowerCase()) : null;
+  document.getElementById('rate-bus-value').value = existing ? existing.bus_rating : '';
+  renderStarPicker('rate-bus-stars', 'rate-bus-value');
+}
+
+async function saveBusRating(){
+  const statusEl = document.getElementById('rate-bus-status');
+  const d = document.getElementById('bus-rate-date').value;
+  const busNumber = document.getElementById('bus-rate-number').value.trim();
+  if(!d){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Pick a date first.'; return; }
+  if(!busNumber){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Enter the bus fleet number.'; return; }
+  const busRating = parseInt(document.getElementById('rate-bus-value').value, 10) || 0;
+  if(!busRating){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Rate the bus (tap a star).'; return; }
+  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
+  const { error } = await sb.from('bus_ratings').upsert([{
+    user_id: currentUser.id, rating_date: d, bus_number: busNumber, bus_rating: busRating
+  }], { onConflict: 'user_id,rating_date,bus_number' });
+  if(error){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = /relation|bus_ratings|does not exist/i.test(error.message)
+      ? 'Bus ratings need a one-off database update — run the bus_ratings block from db-setup.sql.'
+      : error.message;
+    return;
+  }
+  statusEl.style.color = 'var(--teal)'; statusEl.textContent = 'Saved.';
+  await loadRatings();
+  renderRatingsTab();
+}
+
+async function deleteBusRating(dateStr, busNumber){
+  if(!confirm('Delete this bus rating?')) return;
+  await sb.from('bus_ratings').delete().eq('user_id', currentUser.id).eq('rating_date', dateStr).eq('bus_number', busNumber);
+  await loadRatings();
+  renderRatingsTab();
+}
+
+function renderBusRatingsList(){
+  const el = document.getElementById('bus-ratings-list');
+  if(!el) return;
+  if(myBusRatings.length === 0){ el.innerHTML = '<p class="empty">No bus ratings yet.</p>'; return; }
+  el.innerHTML = '';
+  myBusRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
+    const div = document.createElement('div'); div.className = 'off-item';
+    const dt = new Date(r.rating_date + 'T00:00:00');
+    const stars = '★'.repeat(r.bus_rating) + '☆'.repeat(5 - r.bus_rating);
+    div.innerHTML = '<span>' + escapeHtml(dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'}))
+      + ' — <strong style="color:var(--text);">Bus ' + escapeHtml(r.bus_number) + '</strong> ' + stars + '</span>';
+    const rm = document.createElement('button'); rm.textContent = 'Delete'; rm.style.color = 'var(--danger)';
+    rm.onclick = ()=>deleteBusRating(r.rating_date, r.bus_number);
+    div.appendChild(rm); el.appendChild(div);
+  });
+}
+
 function renderTopBuses(){
   const el = document.getElementById('top-buses-list');
   if(!el) return;
   const buckets = {};
-  myRatings.forEach(r=>{
+  myBusRatings.forEach(r=>{
     if(!r.bus_number || !r.bus_rating) return;
     if(!buckets[r.bus_number]) buckets[r.bus_number] = { sum:0, count:0 };
     buckets[r.bus_number].sum += r.bus_rating;
@@ -3978,7 +4043,8 @@ function renderTopBuses(){
 }
 
 function renderRatingsTab(){
-  renderRatingsList();
+  renderShiftRatingsList();
+  renderBusRatingsList();
   renderBestShiftByDay();
   renderTopBuses();
   renderStarPicker('rate-shift-stars', 'rate-shift-value');
@@ -4107,6 +4173,7 @@ async function saveRotaTemplate(){
 }
 
 function startEditRotaTemplate(rtpl){
+  switchTab('admintemplates');
   editingRtpl = rtpl.id;
   document.getElementById('rtpl-name').value = rtpl.name;
   document.getElementById('rtpl-desc-text').value = rtpl.description || '';
