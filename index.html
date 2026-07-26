@@ -488,6 +488,10 @@
         <p class="sec-title">Available shift templates</p>
         <div class="row">
           <div style="max-width:220px;">
+            <label>Search by name</label>
+            <input type="text" id="tpl-search" placeholder="Search templates…" oninput="renderTemplatesBrowseList()" autocomplete="off">
+          </div>
+          <div style="max-width:220px;">
             <label>Filter by category</label>
             <select id="tpl-filter" onchange="renderTemplatesBrowseList()">
               <option value="">— Select a category —</option>
@@ -753,6 +757,12 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <button class="btn full" id="st-submit-btn" onclick="addShiftType()">Add shift type</button>
         <button class="btn secondary full" id="st-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelEdit('st')">Cancel edit</button>
         <div class="status" id="st-status"></div>
+        <div class="row" style="margin-top:10px;">
+          <div style="max-width:220px;">
+            <label>Search your shift types</label>
+            <input type="text" id="st-list-search" placeholder="Search shifts…" oninput="renderShiftTypeList()" autocomplete="off">
+          </div>
+        </div>
         <div id="own-shift-type-list"></div>
         <div id="template-shift-type-list" style="margin-top:14px;"></div>
       </section>
@@ -2665,12 +2675,14 @@ function renderShiftTypeList(){
   populateCopyFromSelects();
   const ownEl = document.getElementById('own-shift-type-list');
   const tplEl = document.getElementById('template-shift-type-list');
-  const ownTypes = shiftTypes.filter(s => !s.source_template_id);
-  const fromTemplates = shiftTypes.filter(s => !!s.source_template_id);
+  const searchTerm = (document.getElementById('st-list-search')?.value || '').trim().toLowerCase();
+  const matchesSearch = s => !searchTerm || s.name.toLowerCase().includes(searchTerm);
+  const ownTypes = shiftTypes.filter(s => !s.source_template_id && matchesSearch(s));
+  const fromTemplates = shiftTypes.filter(s => !!s.source_template_id && matchesSearch(s));
 
   ownEl.innerHTML = '<p class="help" style="margin-top:0;">My own shift types</p>';
   if(ownTypes.length === 0){
-    ownEl.innerHTML += '<p class="empty">None yet — add one above.</p>';
+    ownEl.innerHTML += '<p class="empty">' + (searchTerm ? 'No shift types match.' : 'None yet — add one above.') + '</p>';
   } else {
     const list = document.createElement('div');
     list.className = 'chip-list';
@@ -2679,7 +2691,7 @@ function renderShiftTypeList(){
   }
 
   if(fromTemplates.length === 0){
-    tplEl.innerHTML = '';
+    tplEl.innerHTML = searchTerm && shiftTypes.some(s => !!s.source_template_id) ? '<p class="empty">No shift types match.</p>' : '';
   } else {
     tplEl.innerHTML = '<p class="help" style="margin-top:0;">From shared templates (added via the Templates tab) — you can still edit your own copy</p>';
     const list = document.createElement('div');
@@ -2776,8 +2788,10 @@ function renderTemplatesBrowseList(){
     '<option value="__all__"' + (currentFilter === '__all__' ? ' selected' : '') + '>All</option>' +
     categories.map(c => '<option value="' + escapeHtml(c) + '"' + (currentFilter === c ? ' selected' : '') + '>' + escapeHtml(c) + '</option>').join('');
 
-  if(!filterSelect.value){
-    el.innerHTML = '<p class="empty">Select a category above to browse shift templates, or choose "All" to see everything.</p>';
+  const searchTerm = (document.getElementById('tpl-search')?.value || '').trim().toLowerCase();
+
+  if(!filterSelect.value && !searchTerm){
+    el.innerHTML = '<p class="empty">Select a category above to browse shift templates, choose "All" to see everything, or search by name.</p>';
     return;
   }
 
@@ -2789,6 +2803,10 @@ function renderTemplatesBrowseList(){
   if(activeDayFilter !== ''){
     const dayIdx = parseInt(activeDayFilter, 10);
     visible = visible.filter(t => !t.allowed_days || t.allowed_days[dayIdx] !== false);
+  }
+
+  if(searchTerm){
+    visible = visible.filter(t => t.name.toLowerCase().includes(searchTerm));
   }
 
   if(visible.length === 0){
@@ -3770,6 +3788,52 @@ function revealSwapPicker(){
   renderSwapShiftPicker();
 }
 
+// Reusable searchable shift picker for admin tools built via DOM APIs (as
+// opposed to the static-markup swap picker above). items: [{id, name, color}].
+function createShiftSearchPicker(items, initialId, onChange){
+  const wrap = document.createElement('div');
+  const search = document.createElement('input');
+  search.type = 'text'; search.placeholder = 'Search shifts…'; search.autocomplete = 'off';
+  const list = document.createElement('div'); list.style.marginTop = '6px';
+  let value = initialId || '';
+  let revealed = false;
+
+  function render(){
+    const term = search.value.trim().toLowerCase();
+    if(!revealed && !term){ list.innerHTML = ''; return; }
+    const visible = term ? items.filter(s => s.name.toLowerCase().includes(term)) : items;
+    if(!visible.length){ list.innerHTML = '<p class="empty" style="margin:0;font-size:12px;">No shifts match.</p>'; return; }
+    list.innerHTML = '<div class="swap-pick-list">' + visible.map(s=>{
+      const sel = s.id === value ? ' selected' : '';
+      const dot = s.color
+        ? '<span class="swap-pick-dot" style="background:' + escapeHtml(s.color) + ';"></span>'
+        : '<span class="swap-pick-dot" style="background:var(--border);"></span>';
+      const label = (s.id === '' || s.id === '__holiday__')
+        ? '<span class="swap-pick-rest">' + escapeHtml(s.name) + '</span>'
+        : escapeHtml(s.name);
+      return '<div class="swap-pick-item' + sel + '" data-shift-id="' + escapeHtml(s.id) + '">' + dot + label + '</div>';
+    }).join('') + '</div>';
+    list.querySelectorAll('.swap-pick-item').forEach(item=>{
+      item.addEventListener('click', ()=>{
+        value = item.getAttribute('data-shift-id') || '';
+        render();
+        if(onChange) onChange(value);
+      });
+    });
+  }
+  search.oninput = render;
+  search.onfocus = ()=>{ revealed = true; render(); };
+
+  wrap.appendChild(search);
+  wrap.appendChild(list);
+  return {
+    el: wrap,
+    getValue: ()=> value,
+    setValue: (v)=>{ value = v || ''; render(); },
+    setItems: (newItems)=>{ items = newItems; render(); }
+  };
+}
+
 function selectSwapShift(id){
   swapPickerRevealed = true;
   document.getElementById('swap-to-shift').value = id;
@@ -4699,17 +4763,15 @@ function renderAdminCalEditor(container){
   const mk = (label, el, maxW)=>{ const d=document.createElement('div'); if(maxW)d.style.maxWidth=maxW; const l=document.createElement('label'); l.textContent=label; d.appendChild(l); d.appendChild(el); return d; };
 
   const dateInput = document.createElement('input'); dateInput.type = 'date';
-  const shiftSel = document.createElement('select');
-  shiftSel.appendChild(new Option('Rest day', ''));
-  shiftSel.appendChild(new Option('Holiday', '__holiday__'));
-  ac.shiftTypes.forEach(s => shiftSel.appendChild(new Option(s.name, s.id)));
+  const shiftPickerItems = [{ id:'', name:'Rest day', color:'' }, { id:'__holiday__', name:'Holiday', color:'' }].concat(ac.shiftTypes);
+  const shiftPicker = createShiftSearchPicker(shiftPickerItems, '');
 
   const currentNote = document.createElement('p'); currentNote.className = 'help'; currentNote.style.margin = '2px 0 0';
   const showCurrent = ()=>{
     if(!dateInput.value){ currentNote.textContent = ''; return; }
     const id = computeEffectiveShift(ac.rota, ac.overrides, dateInput.value);
     currentNote.textContent = 'Currently: ' + adminCalValueLabel(id);
-    if(id === '' || id === '__holiday__' || ac.shiftTypes.some(s => s.id === id)) shiftSel.value = id;
+    if(id === '' || id === '__holiday__' || ac.shiftTypes.some(s => s.id === id)) shiftPicker.setValue(id);
   };
   dateInput.onchange = showCurrent;
 
@@ -4719,7 +4781,7 @@ function renderAdminCalEditor(container){
   applyBtn.onclick = async ()=>{
     if(!dateInput.value){ status.style.color='var(--danger)'; status.textContent='Pick a date.'; return; }
     applyBtn.disabled = true; status.style.color='var(--text-dim)'; status.textContent='Saving…';
-    const { error } = await sb.from('overrides').upsert([{ user_id: ac.userId, override_date: dateInput.value, value: shiftSel.value, source: 'admin' }], { onConflict: 'user_id,override_date' });
+    const { error } = await sb.from('overrides').upsert([{ user_id: ac.userId, override_date: dateInput.value, value: shiftPicker.getValue(), source: 'admin' }], { onConflict: 'user_id,override_date' });
     applyBtn.disabled = false;
     if(error){ status.style.color='var(--danger)'; status.textContent = /policy|permission|row-level/i.test(error.message) ? 'Needs the "Admins can manage any overrides" policy from db-setup.sql.' : error.message; return; }
     const { data } = await sb.from('overrides').select('*').eq('user_id', ac.userId).order('override_date');
@@ -4729,7 +4791,7 @@ function renderAdminCalEditor(container){
 
   const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '8px';
   row.appendChild(mk('Date', dateInput, '170px'));
-  row.appendChild(mk('Change to', shiftSel, '170px'));
+  row.appendChild(mk('Change to', shiftPicker.el, '220px'));
   const bw = document.createElement('div'); bw.style.cssText = 'display:flex;align-items:flex-end;'; bw.appendChild(applyBtn);
   row.appendChild(bw);
   container.appendChild(row);
