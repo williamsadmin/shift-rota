@@ -1917,7 +1917,7 @@ function buildDutyBoardLines(legsInput){
     lines.push('⏰ Watch: leg ' + formatClock(lc.start) + '–' + formatClock(lc.end) + ' (' + formatDuration(lc.minutes) + ') — nearing the 5:30 single-leg limit');
   });
   shortBreaks.forEach(sb=>{
-    lines.push('⏰ Watch: break ' + formatClock(sb.start) + '–' + formatClock(sb.end) + ' (' + formatDuration(sb.minutes) + ') — under 50 min');
+    lines.push('⏰ Watch: break ' + formatClock(sb.start) + '–' + formatClock(sb.end) + ' (' + formatDuration(sb.minutes) + ') — nearing 30 minute minimum break');
   });
 
   if(!driveFail && !spanFail && !breakViolation && !driveCaution && !spanCaution && !contCaution
