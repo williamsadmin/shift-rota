@@ -1,13 +1,13 @@
 // Shift Rota service worker — makes the app installable and works offline for
 // the app shell. Supabase / CDN requests are left to the network.
-const CACHE = 'shift-rota-v4';
+const CACHE = 'shift-rota-v5';
 const SHELL = [
   './',
   './index.html',
-  './manifest.webmanifest?v=2',
-  './icon-192.png?v=2',
-  './icon-512.png?v=2',
-  './apple-touch-icon.png?v=2'
+  './manifest.webmanifest?v=3',
+  './icon-192.png?v=3',
+  './icon-512.png?v=3',
+  './apple-touch-icon.png?v=3'
 ];
 
 self.addEventListener('install', (e) => {
