@@ -1800,10 +1800,13 @@ function buildDutyBoardLines(legsInput){
   const BREAK_THRESHOLD = 30;    // minimum gap (min) that counts as a qualifying break
   const CONTINUOUS_LIMIT = 330;  // 5h30m in minutes
   const CAUTION_MARGIN = 30;     // warn when within this many minutes of a limit
+  const SHORT_BREAK_LIMIT = 50;  // warn when a qualifying break is under this many minutes
   let continuousDriving = 0;
   let maxContinuous = 0;         // longest continuous driving stretch reached
   let breakViolation = false;
   let totalBreakMinutes = 0;
+  let legCautions = [];          // individual legs nearing the continuous-driving limit on their own
+  let shortBreaks = [];          // qualifying breaks under SHORT_BREAK_LIMIT
 
   for(let i=0; i<timed.length; i++){
     const leg = timed[i];
@@ -1816,6 +1819,7 @@ function buildDutyBoardLines(legsInput){
       lines.push('');
       totalBreakMinutes += legMinutes;
       continuousDriving = 0; // counts toward the GB driving-hours break
+      if(legMinutes < SHORT_BREAK_LIMIT) shortBreaks.push({ start: leg.startAbs, end: leg.endAbs, minutes: legMinutes });
     } else {
       totalLegMinutes += legMinutes;
       const fromTo = [leg.from, leg.to].filter(Boolean).join(' → ');
@@ -1829,6 +1833,9 @@ function buildDutyBoardLines(legsInput){
       continuousDriving += legMinutes;
       if(continuousDriving >= CONTINUOUS_LIMIT) breakViolation = true;
       maxContinuous = Math.max(maxContinuous, continuousDriving);
+      if(legMinutes >= CONTINUOUS_LIMIT - CAUTION_MARGIN && legMinutes < CONTINUOUS_LIMIT){
+        legCautions.push({ start: leg.startAbs, end: leg.endAbs, minutes: legMinutes });
+      }
     }
 
     if(i < timed.length - 1){
@@ -1840,6 +1847,7 @@ function buildDutyBoardLines(legsInput){
         lines.push('');
         continuousDriving = 0; // counts toward the GB driving-hours break
         totalBreakMinutes += gap;
+        if(gap < SHORT_BREAK_LIMIT) shortBreaks.push({ start: leg.endAbs, end: timed[i+1].startAbs, minutes: gap });
       } else if(gap > 0){
         lines.push('Gap (' + formatDuration(gap) + ')');
       }
@@ -1887,8 +1895,15 @@ function buildDutyBoardLines(legsInput){
   if(contCaution){
     lines.push('⏰ Watch: ' + formatDuration(maxContinuous) + ' continuous driving — nearing the 5:30 break limit');
   }
+  legCautions.forEach(lc=>{
+    lines.push('⏰ Watch: leg ' + formatClock(lc.start) + '–' + formatClock(lc.end) + ' (' + formatDuration(lc.minutes) + ') — nearing the 5:30 single-leg limit');
+  });
+  shortBreaks.forEach(sb=>{
+    lines.push('⏰ Watch: break ' + formatClock(sb.start) + '–' + formatClock(sb.end) + ' (' + formatDuration(sb.minutes) + ') — under 50 min');
+  });
 
-  if(!driveFail && !spanFail && !breakViolation && !driveCaution && !spanCaution && !contCaution){
+  if(!driveFail && !spanFail && !breakViolation && !driveCaution && !spanCaution && !contCaution
+     && legCautions.length === 0 && shortBreaks.length === 0){
     lines.push('✅ Within GB domestic hours limits');
   }
 
