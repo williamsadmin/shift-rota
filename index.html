@@ -745,6 +745,19 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="row">
           <div><label>Paid hours (HH:MM)</label><input type="text" id="st-paid" placeholder="e.g. 08:43"></div>
         </div>
+        <label>Allowed days</label>
+        <p class="help" style="margin-top:0;">Untick any day this shift should never be assigned to.</p>
+        <div class="row" id="st-allowed-days" style="margin-bottom:10px;">
+          <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="st-day-0" checked> Sun</label>
+          <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="st-day-1" checked> Mon</label>
+          <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="st-day-2" checked> Tue</label>
+          <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="st-day-3" checked> Wed</label>
+        </div>
+        <div class="row" style="margin-bottom:10px;">
+          <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="st-day-4" checked> Thu</label>
+          <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="st-day-5" checked> Fri</label>
+          <label class="checkbox-row" style="margin:0;"><input type="checkbox" id="st-day-6" checked> Sat</label>
+        </div>
         <div class="row">
           <div>
             <label>Duty board (optional) — add each leg, then it's totalled and formatted automatically</label>
@@ -2567,11 +2580,12 @@ async function addShiftType(){
   const description = document.getElementById('st-desc').value.trim();
   const color = document.getElementById('st-color').value;
   const legsData = legBuilders.st;
+  const allowedDays = getAllowedDaysFromForm('st');
 
   const payload = {
     is_template: false, name,
     all_day: allDay, start_time: start, end_time: end,
-    paid_hours: paidHours, description, color, legs_data: legsData
+    paid_hours: paidHours, description, color, legs_data: legsData, allowed_days: allowedDays
   };
 
   // If the user is editing a template-derived copy, detach it so future template updates
@@ -2664,8 +2678,8 @@ function copyFromExisting(prefix){
   document.getElementById(prefix + '-paid').value = source.paid_hours || '';
   if(prefix === 'tpl'){
     document.getElementById('tpl-category').value = source.category || '';
-    setAllowedDaysOnForm(source.allowed_days);
   }
+  setAllowedDaysOnForm(source.allowed_days, prefix);
   legBuilders[prefix] = (source.legs_data && Array.isArray(source.legs_data)) ? JSON.parse(JSON.stringify(source.legs_data)) : [];
   renderLegRows(prefix);
   sel.value = ''; // reset the picker itself so it's clear this was a one-off copy, not a persistent link
@@ -2706,8 +2720,14 @@ function buildShiftChip(s, isTemplateRow){
   div.className = 'chip';
   div.style.background = s.color || '#F2A93B';
   const timeLabel = s.all_day ? 'no fixed time' : (s.start_time + '–' + s.end_time);
+  let label = s.name + ' · ' + timeLabel;
+  if(s.allowed_days && Array.isArray(s.allowed_days) && s.allowed_days.some(v => v === false)){
+    const dayShortNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    const allowedNames = dayShortNames.filter((_, i) => s.allowed_days[i] !== false);
+    label += ' · ' + allowedNames.join('/') + ' only';
+  }
   const span = document.createElement('span');
-  span.textContent = s.name + ' · ' + timeLabel;
+  span.textContent = label;
   div.appendChild(span);
   const editBtn = document.createElement('button');
   editBtn.textContent = '✎';
@@ -2730,6 +2750,7 @@ function startEditShiftType(s){
   document.getElementById('st-start').value = s.start_time || '09:00';
   document.getElementById('st-end').value = s.end_time || '17:00';
   document.getElementById('st-paid').value = s.paid_hours || '';
+  setAllowedDaysOnForm(s.allowed_days, 'st');
   legBuilders.st = (s.legs_data && Array.isArray(s.legs_data)) ? JSON.parse(JSON.stringify(s.legs_data)) : [];
   renderLegRows('st');
   document.getElementById('st-submit-btn').textContent = 'Save changes';
@@ -2762,8 +2783,8 @@ function cancelEdit(prefix){
   document.getElementById(prefix + '-paid').value = '';
   if(prefix === 'tpl'){
     document.getElementById('tpl-category').value = '';
-    setAllowedDaysOnForm(null);
   }
+  setAllowedDaysOnForm(null, prefix);
   const copySel = document.getElementById(prefix + '-copy-from');
   if(copySel) copySel.value = '';
   document.getElementById(prefix + '-allday').checked = false;
@@ -2851,18 +2872,20 @@ function renderTemplatesBrowseList(){
   });
 }
 
-function getAllowedDaysFromForm(){
+function getAllowedDaysFromForm(prefix){
+  prefix = prefix || 'tpl';
   const arr = [];
   for(let i=0; i<7; i++){
-    arr.push(document.getElementById('tpl-day-' + i).checked);
+    arr.push(document.getElementById(prefix + '-day-' + i).checked);
   }
   return arr;
 }
 
-function setAllowedDaysOnForm(allowedDays){
+function setAllowedDaysOnForm(allowedDays, prefix){
+  prefix = prefix || 'tpl';
   const arr = (allowedDays && Array.isArray(allowedDays)) ? allowedDays : [true,true,true,true,true,true,true];
   for(let i=0; i<7; i++){
-    document.getElementById('tpl-day-' + i).checked = arr[i] !== false;
+    document.getElementById(prefix + '-day-' + i).checked = arr[i] !== false;
   }
 }
 
