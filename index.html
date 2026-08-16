@@ -243,7 +243,7 @@
           <div style="margin-top:12px;">
             <p class="help" style="margin-top:0;">Pick a date, then what it should become — a different shift, or a rest day.</p>
             <div class="row">
-              <div style="max-width:180px;"><label>Date</label><input type="date" id="swap-from"></div>
+              <div style="max-width:180px;"><label>Date</label><input type="date" id="swap-from" onchange="onSwapFromDateChange()"></div>
             </div>
             <div style="margin-bottom:10px;">
               <label>Change to</label>
@@ -3777,13 +3777,16 @@ function renderSwapShiftPicker(){
   if(!el) return;
   const term = (document.getElementById('swap-shift-search')?.value || '').trim().toLowerCase();
   const current = document.getElementById('swap-to-shift')?.value || '';
+  const dateVal = document.getElementById('swap-from')?.value || '';
+  const weekday = dateVal ? new Date(dateVal + 'T00:00:00').getDay() : null;
 
   if(!swapPickerRevealed && !term){
     el.innerHTML = '<p class="empty" style="margin:0;font-size:12px;">Tap the box above and search to choose a shift.</p>';
     return;
   }
 
-  const items = [{ id:'', name:'Rest day', color:'' }].concat(shiftTypes);
+  const items = [{ id:'', name:'Rest day', color:'' }].concat(shiftTypes)
+    .filter(s => s.id === '' || weekday === null || !s.allowed_days || s.allowed_days[weekday] !== false);
   const visible = term ? items.filter(s => s.name.toLowerCase().includes(term)) : items;
 
   if(visible.length === 0){
@@ -3811,6 +3814,22 @@ function revealSwapPicker(){
   renderSwapShiftPicker();
 }
 
+// Re-check the selected target shift against the new date's weekday — clear it
+// if it's no longer an allowed day for that shift.
+function onSwapFromDateChange(){
+  const dateVal = document.getElementById('swap-from')?.value || '';
+  const weekday = dateVal ? new Date(dateVal + 'T00:00:00').getDay() : null;
+  const currentId = document.getElementById('swap-to-shift')?.value || '';
+  if(currentId && weekday !== null){
+    const shift = shiftTypes.find(s => s.id === currentId);
+    if(shift && shift.allowed_days && shift.allowed_days[weekday] === false){
+      document.getElementById('swap-to-shift').value = '';
+      document.getElementById('swap-shift-search').value = '';
+    }
+  }
+  renderSwapShiftPicker();
+}
+
 // Reusable searchable shift picker for admin tools built via DOM APIs (as
 // opposed to the static-markup swap picker above). items: [{id, name, color}].
 function createShiftSearchPicker(items, initialId, onChange){
@@ -3820,11 +3839,15 @@ function createShiftSearchPicker(items, initialId, onChange){
   const list = document.createElement('div'); list.style.marginTop = '6px';
   let value = initialId || '';
   let revealed = false;
+  let weekday = null; // 0=Sun..6=Sat, or null for no day-of-week restriction
 
   function render(){
     const term = search.value.trim().toLowerCase();
     if(!revealed && !term){ list.innerHTML = ''; return; }
-    const visible = term ? items.filter(s => s.name.toLowerCase().includes(term)) : items;
+    const dayFiltered = weekday === null
+      ? items
+      : items.filter(s => s.id === value || !s.allowed_days || s.allowed_days[weekday] !== false);
+    const visible = term ? dayFiltered.filter(s => s.name.toLowerCase().includes(term)) : dayFiltered;
     if(!visible.length){ list.innerHTML = '<p class="empty" style="margin:0;font-size:12px;">No shifts match.</p>'; return; }
     list.innerHTML = '<div class="swap-pick-list">' + visible.map(s=>{
       const sel = s.id === value ? ' selected' : '';
@@ -3853,7 +3876,8 @@ function createShiftSearchPicker(items, initialId, onChange){
     el: wrap,
     getValue: ()=> value,
     setValue: (v)=>{ value = v || ''; render(); },
-    setItems: (newItems)=>{ items = newItems; render(); }
+    setItems: (newItems)=>{ items = newItems; render(); },
+    setWeekday: (w)=>{ weekday = (w === null || w === undefined) ? null : w; render(); }
   };
 }
 
@@ -4795,7 +4819,8 @@ function renderAdminCalEditor(container){
 
   const currentNote = document.createElement('p'); currentNote.className = 'help'; currentNote.style.margin = '2px 0 0';
   const showCurrent = ()=>{
-    if(!dateInput.value){ currentNote.textContent = ''; return; }
+    if(!dateInput.value){ currentNote.textContent = ''; shiftPicker.setWeekday(null); return; }
+    shiftPicker.setWeekday(new Date(dateInput.value + 'T00:00:00').getDay());
     const id = computeEffectiveShift(ac.rota, ac.overrides, dateInput.value);
     currentNote.textContent = 'Currently: ' + adminCalValueLabel(id);
     if(id === '' || id === '__holiday__' || ac.shiftTypes.some(s => s.id === id)) shiftPicker.setValue(id);
