@@ -4380,13 +4380,17 @@ function renderRtplGrid(){
     labels.forEach(d=>{ const l=document.createElement('div'); l.className='day-label'; l.textContent=d; grid.appendChild(l); });
     for(let d=0; d<7; d++){
       const idx = w*7+d;
+      const realWeekday = (wsd + d) % 7;
       const cell = document.createElement('div');
       const sel = document.createElement('select');
       const blank = document.createElement('option'); blank.value=''; blank.textContent='—'; sel.appendChild(blank);
+      const current = rtplPattern[idx] || '';
       templates.forEach(t=>{
-        const opt=document.createElement('option'); opt.value=t.id; opt.textContent=t.name; sel.appendChild(opt);
+        const allowed = !t.allowed_days || t.allowed_days[realWeekday] !== false;
+        if(!allowed && t.id !== current) return; // hide disallowed options, but never hide the day's existing assignment
+        const opt=document.createElement('option'); opt.value=t.id; opt.textContent=t.name + (allowed ? '' : ' (not allowed this day)'); sel.appendChild(opt);
       });
-      sel.value = rtplPattern[idx] || '';
+      sel.value = current;
       styleRtplSelect(sel);
       sel.addEventListener('change', ()=>{ rtplPattern[idx]=sel.value; styleRtplSelect(sel); });
       cell.appendChild(sel); grid.appendChild(cell);
