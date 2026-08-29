@@ -221,6 +221,8 @@
         <p class="sub">Your original rota with any holidays and swaps already applied.</p>
       </header>
 
+      <button type="button" class="btn secondary full" id="calendar-past-toggle" style="margin-bottom:14px;" onclick="toggleCalendarPastView()">▾ Show previous shifts</button>
+
       <section id="upcoming-banner" style="display:none;">
         <p class="sec-title" style="color:var(--amber);">Coming up in the next 2 days</p>
         <div id="upcoming-list"></div>
@@ -957,6 +959,7 @@ let allOverrides = []; // every override row for the current user, not just holi
 let bankHolidays = new Set();
 let pendingSwap = null; // { fromDate, toDate, fromValue, toValue }
 let swapPickerRevealed = false; // Change-a-day picker stays hidden until the search is focused
+let calendarShowPast = false; // "Show previous shifts" toggle — always closed on startup
 let profileCache = {}; // id -> profile, for display
 let allProfiles = []; // every other user's profile, for the People list
 let pinnedIds = new Set(); // ids of users I've starred
@@ -3640,6 +3643,19 @@ function getCalendarEndDate(today){
   return end;
 }
 
+const CALENDAR_PAST_DAYS = 14; // "Show previous shifts" reveals at least the last 2 weeks
+
+function getCalendarStartDate(today){
+  const start = new Date(today);
+  if(calendarShowPast) start.setDate(start.getDate() - CALENDAR_PAST_DAYS);
+  return start;
+}
+
+function toggleCalendarPastView(){
+  calendarShowPast = !calendarShowPast;
+  renderCalendarTab();
+}
+
 function rangeLabel(){
   const rangeVal = document.getElementById('calendar-range').value;
   if(rangeVal === '0.25') return 'the next week';
@@ -3664,7 +3680,12 @@ function renderCalendarTab(){
   }
   const viewMode = document.getElementById('calendar-view-mode').value;
   const today = new Date(); today.setHours(0,0,0,0);
+  const start = getCalendarStartDate(today);
   const end = getCalendarEndDate(today);
+  const todayKey = dateKeyLocal(today);
+
+  const pastToggle = document.getElementById('calendar-past-toggle');
+  if(pastToggle) pastToggle.textContent = calendarShowPast ? '▴ Hide previous shifts' : '▾ Show previous shifts';
 
   listEl.style.display = viewMode === 'list' ? 'block' : 'none';
   gridEl.style.display = viewMode === 'grid' ? '' : 'none';
@@ -3675,11 +3696,12 @@ function renderCalendarTab(){
   gridEl.className = viewMode === 'grid' ? 'grid' : '';
 
   let weekTotal = 0, grandTotal = 0;
-  const cursor = new Date(today);
+  const cursor = new Date(start);
   let isFirstCell = true;
 
   while(cursor <= end){
     const key = dateKeyLocal(cursor);
+    const isToday = key === todayKey;
     const shiftId = effectiveShift(key);
     const shift = shiftTypes.find(s => s.id === shiftId);
     const isHoliday = shiftId === '__holiday__';
@@ -3706,6 +3728,7 @@ function renderCalendarTab(){
       if(isBankHoliday) label += ' 🎉 Bank holiday';
       if(ov && (ov.source === 'self_swap' || ov.source === 'friend_swap')) label += ' ⇄ changed';
       if(ov && ov.tentative) label += ' ⏳';
+      if(isToday) label += ' <span style="color:var(--teal);font-weight:600;">· Today</span>';
       row.style.cursor = 'pointer';
       row.onclick = ()=>showDayDetail(key);
       row.innerHTML = '<span>' + swatch + label + '</span>';
@@ -3735,6 +3758,7 @@ function renderCalendarTab(){
       cell.style.cursor = 'pointer';
       cell.onclick = ()=>showDayDetail(key);
       if(isBankHoliday) cell.style.outline = '2px solid var(--amber)';
+      if(isToday) cell.style.boxShadow = 'inset 0 0 0 2px var(--teal)';
       let inner = String(cursor.getDate());
       if(isHoliday){
         inner += '<span class="pay-line">Holiday</span>';
@@ -3764,7 +3788,7 @@ function renderCalendarTab(){
   }
 
   incomeEl.innerHTML = payRates.enabled
-    ? '<div class="income-row total"><span>Estimated income, ' + rangeLabel() + '</span><strong>£' + grandTotal.toFixed(2) + '</strong></div>'
+    ? '<div class="income-row total"><span>Estimated income, ' + (calendarShowPast ? 'the past 2 weeks + ' : '') + rangeLabel() + '</span><strong>£' + grandTotal.toFixed(2) + '</strong></div>'
     : '';
 }
 
