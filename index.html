@@ -656,6 +656,10 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
             </select>
           </div>
         </div>
+        <div class="checkbox-row" style="margin-bottom:10px;">
+          <input type="checkbox" id="rtpl-split-shifts-toggle" onchange="onRtplSplitShiftsToggle(this)">
+          <label for="rtpl-split-shifts-toggle">🔀 Allow split shifts (pick more than one shift for a day)</label>
+        </div>
         <div id="rtpl-grid" style="margin-bottom:10px;"></div>
         <button class="btn full" id="rtpl-submit-btn" onclick="saveRotaTemplate()">Create rota template</button>
         <button class="btn secondary full" id="rtpl-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelRotaTemplateEdit()">Cancel edit</button>
@@ -839,6 +843,10 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           </div>
         </div>
         <p class="help" style="margin-top:0;margin-bottom:12px;">Pick a shift for each day — leave as "—" for a rest day. You'll line this pattern up with a real date in step 3.</p>
+        <div class="checkbox-row" style="margin-bottom:10px;">
+          <input type="checkbox" id="split-shifts-toggle" onchange="onSplitShiftsToggle(this)">
+          <label for="split-shifts-toggle">🔀 Allow split shifts (pick more than one shift for a day)</label>
+        </div>
         <div id="pattern-grid"></div>
         <div style="margin-top:14px;padding:10px;border:1px solid var(--border);border-radius:7px;">
           <label style="font-weight:600;color:var(--text);">Quick-add a shift</label>
@@ -1335,6 +1343,35 @@ function shiftTimeLabel(shift){
   return ' (' + shift.start_time + '–' + shift.end_time + ')';
 }
 
+// A day's pattern value is normally a single shift-type id, '' (rest day), or
+// '__holiday__' (override only). With split shifts it can also be several
+// shift-type ids joined by commas — these helpers keep that encoding in one place.
+function splitShiftIds(value){
+  if(!value || value === '__holiday__') return [];
+  return value.split(',').filter(Boolean);
+}
+function joinShiftIds(ids){
+  return (ids || []).filter(Boolean).join(',');
+}
+function resolveDayShifts(value, typesArr){
+  return splitShiftIds(value).map(id => typesArr.find(s => s.id === id)).filter(Boolean);
+}
+function multiShiftNameLabel(shifts){
+  return shifts.map(s => s.name).join(' + ');
+}
+function multiShiftTimeLabel(shifts){
+  return shifts.map(s => shiftTimeLabel(s)).join('');
+}
+// A single color for one shift, or an even-banded gradient for several — used
+// anywhere a day cell needs to show it's a split shift at a glance.
+function multiShiftBackground(shifts){
+  const colors = shifts.map(s => s.color || '#F2A93B');
+  if(colors.length <= 1) return colors[0] || '#F2A93B';
+  const step = 100 / colors.length;
+  const stops = colors.map((c,i) => c + ' ' + (i*step) + '%, ' + c + ' ' + ((i+1)*step) + '%').join(', ');
+  return 'linear-gradient(90deg, ' + stops + ')';
+}
+
 function renderFriendCalendar(){
   const listEl = document.getElementById('friend-calendar-list');
   if(!listEl || !selectedFriend) return;
@@ -1359,7 +1396,7 @@ function renderFriendCalendar(){
   while(cursor <= end){
     const key = dateKeyLocal(cursor);
     const friendShiftId = computeEffectiveShift(friendData.rota, friendData.overrides, key);
-    const friendShift = friendData.shiftTypes.find(s => s.id === friendShiftId);
+    const friendShifts = resolveDayShifts(friendShiftId, friendData.shiftTypes);
     const friendWorking = !!friendShiftId && friendShiftId !== '__holiday__';
 
     const row = document.createElement('div');
@@ -1369,17 +1406,17 @@ function renderFriendCalendar(){
 
     if(compare){
       const myShiftId = computeEffectiveShift(myRota, allOverrides, key);
-      const myShift = shiftTypes.find(s => s.id === myShiftId);
+      const myShifts = resolveDayShifts(myShiftId, shiftTypes);
       const myWorking = !!myShiftId && myShiftId !== '__holiday__';
 
       const people = [
-        { label: 'You', shift: myShift, shiftId: myShiftId, working: myWorking },
-        { label: friendLabel(selectedFriend), shift: friendShift, shiftId: friendShiftId, working: friendWorking }
+        { label: 'You', shifts: myShifts, shiftId: myShiftId, working: myWorking },
+        { label: friendLabel(selectedFriend), shifts: friendShifts, shiftId: friendShiftId, working: friendWorking }
       ];
       if(selectedFriend2 && friendData2.rota){
         const p2Id = computeEffectiveShift(friendData2.rota, friendData2.overrides, key);
-        const p2Shift = friendData2.shiftTypes.find(s => s.id === p2Id);
-        people.push({ label: friendLabel(selectedFriend2), shift: p2Shift, shiftId: p2Id, working: !!p2Id && p2Id !== '__holiday__' });
+        const p2Shifts = resolveDayShifts(p2Id, friendData2.shiftTypes);
+        people.push({ label: friendLabel(selectedFriend2), shifts: p2Shifts, shiftId: p2Id, working: !!p2Id && p2Id !== '__holiday__' });
       }
 
       const workingCount = people.filter(p => p.working).length;
@@ -1399,32 +1436,35 @@ function renderFriendCalendar(){
       row.style.display = 'block';
       row.innerHTML =
         '<div class="cmp-date">' + escapeHtml(dateLabel) + '</div>' +
-        '<div class="cmp-cols">' + people.map(p => compareShiftCell(p.label, p.shiftId, p.shift)).join('') + '</div>';
+        '<div class="cmp-cols">' + people.map(p => compareShiftCell(p.label, p.shiftId, p.shifts)).join('') + '</div>';
       row.onclick = ()=>showCompareDayDetailMulti(key, people);
     } else {
       let label = dateLabel + ' — ';
       if(friendShiftId === '__holiday__') label += 'Holiday';
-      else if(friendShift) label += friendShift.name + shiftTimeLabel(friendShift);
+      else if(friendShifts.length) label += multiShiftNameLabel(friendShifts) + multiShiftTimeLabel(friendShifts);
       else label += '—';
       row.innerHTML = '<span>' + label + '</span>';
-      row.onclick = ()=>showFriendDayDetail(key, friendShift, friendShiftId);
+      row.onclick = ()=>showFriendDayDetail(key, friendShifts, friendShiftId);
     }
     listEl.appendChild(row);
     cursor.setDate(cursor.getDate()+1);
   }
 }
 
-function buildDayDetailHTML(dateStr, shift, shiftId, ownerPrefix){
+function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix){
   const dateObj = new Date(dateStr + 'T00:00:00');
   const dateLabel = dateObj.toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long', year:'numeric'});
   let html = '<p style="margin:0 0 8px;font-weight:600;color:var(--text);">' + ownerPrefix + dateLabel + '</p>';
   if(shiftId === '__holiday__'){
     html += '<p class="help" style="margin:0;">Holiday</p>';
-  } else if(shift){
-    html += '<p class="help" style="margin:0 0 4px;"><strong style="color:var(--text);">' + escapeHtml(shift.name) + '</strong>' + shiftTimeLabel(shift) + '</p>';
-    if(shift.paid_hours) html += '<p class="help" style="margin:0 0 4px;">Paid hours: ' + escapeHtml(shift.paid_hours) + '</p>';
-    if(shift.description) html += '<div class="leg-summary" style="margin-top:8px;">' + escapeHtml(shift.description) + '</div>';
-    else html += '<p class="help" style="margin:6px 0 0;">No duty board details added for this shift.</p>';
+  } else if(shifts && shifts.length){
+    shifts.forEach((shift, i)=>{
+      if(i > 0) html += '<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">';
+      html += '<p class="help" style="margin:0 0 4px;"><strong style="color:var(--text);">' + escapeHtml(shift.name) + '</strong>' + shiftTimeLabel(shift) + '</p>';
+      if(shift.paid_hours) html += '<p class="help" style="margin:0 0 4px;">Paid hours: ' + escapeHtml(shift.paid_hours) + '</p>';
+      if(shift.description) html += '<div class="leg-summary" style="margin-top:8px;">' + escapeHtml(shift.description) + '</div>';
+      else html += '<p class="help" style="margin:6px 0 0;">No duty board details added for this shift.</p>';
+    });
   } else {
     html += '<p class="help" style="margin:0;">Rest day</p>';
   }
@@ -1433,7 +1473,7 @@ function buildDayDetailHTML(dateStr, shift, shiftId, ownerPrefix){
 
 function showDayDetail(dateStr){
   const shiftId = effectiveShift(dateStr);
-  const shift = shiftTypes.find(s => s.id === shiftId);
+  const shifts = resolveDayShifts(shiftId, shiftTypes);
   const panel = document.getElementById('day-detail-panel');
   if(!panel) return;
   const ov = allOverrides.find(o => o.override_date === dateStr);
@@ -1441,15 +1481,15 @@ function showDayDetail(dateStr){
   let revertBtn = '';
   if(isChange){
     const originalId = patternShiftForDate(dateStr);
-    const originalShift = shiftTypes.find(s => s.id === originalId);
-    const originalLabel = originalId === '' ? 'Rest day' : (originalShift ? originalShift.name : 'original shift');
+    const originalShifts = resolveDayShifts(originalId, shiftTypes);
+    const originalLabel = originalId === '' ? 'Rest day' : (originalShifts.length ? multiShiftNameLabel(originalShifts) : 'original shift');
     revertBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="revertDayToOriginal(\'' + dateStr + '\')">Revert to original (' + escapeHtml(originalLabel) + ')</button>';
   }
   const hasOt = overtimeRequests.has(dateStr);
   const otBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="toggleOvertime(\'' + dateStr + '\')">'
     + (hasOt ? 'Cancel overtime request' : '💪 Request overtime this day') + '</button>';
   const swapBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="startSwapFromDay(\'' + dateStr + '\')">⇄ Swap this shift</button>';
-  panel.innerHTML = buildDayDetailHTML(dateStr, shift, shiftId, 'My — ')
+  panel.innerHTML = buildDayDetailHTML(dateStr, shifts, shiftId, 'My — ')
     + (hasOt ? '<p class="help" style="margin:8px 0 0;color:var(--amber);">Overtime requested for this day.</p>' : '')
     + revertBtn + swapBtn + otBtn +
     '<button class="btn secondary full" style="margin-top:10px;" onclick="closeDayDetail()">Close</button>';
@@ -1606,8 +1646,8 @@ async function markOvertimeTold(dateStr){
 
 async function revertDayToOriginal(dateStr){
   const originalId = patternShiftForDate(dateStr);
-  const originalShift = shiftTypes.find(s => s.id === originalId);
-  const originalLabel = originalId === '' ? 'a rest day' : (originalShift ? originalShift.name : 'its original shift');
+  const originalShifts = resolveDayShifts(originalId, shiftTypes);
+  const originalLabel = originalId === '' ? 'a rest day' : (originalShifts.length ? multiShiftNameLabel(originalShifts) : 'its original shift');
   if(!confirm('Revert this day back to ' + originalLabel + '? This removes the change you made.')) return;
   const { error } = await sb.from('overrides').delete().eq('user_id', currentUser.id).eq('override_date', dateStr);
   if(error){ alert('Could not revert: ' + error.message); return; }
@@ -1623,16 +1663,13 @@ function closeDayDetail(){
   document.getElementById('day-detail-panel').style.display = 'none';
 }
 
-function compareShiftCell(who, shiftId, shift){
+function compareShiftCell(who, shiftId, shifts){
   let inner;
   if(shiftId === '__holiday__'){
     inner = '<span class="cmp-dot" style="background:var(--text-dim);"></span><span class="cmp-name">Holiday</span>';
-  } else if(shift){
-    const time = (!shift.all_day && shift.start_time)
-      ? ' <span class="cmp-time">' + escapeHtml(shift.start_time + '–' + shift.end_time) + '</span>'
-      : '';
-    inner = '<span class="cmp-dot" style="background:' + escapeHtml(shift.color || '#F2A93B') + ';"></span>'
-      + '<span class="cmp-name">' + escapeHtml(shift.name) + time + '</span>';
+  } else if(shifts && shifts.length){
+    const dots = shifts.map(s => '<span class="cmp-dot" style="background:' + escapeHtml(s.color || '#F2A93B') + ';"></span>').join('');
+    inner = dots + '<span class="cmp-name">' + escapeHtml(multiShiftNameLabel(shifts)) + escapeHtml(multiShiftTimeLabel(shifts)) + '</span>';
   } else {
     inner = '<span class="cmp-dot" style="background:transparent;border:1px solid var(--border);"></span>'
       + '<span class="cmp-name" style="color:var(--text-dim);font-weight:400;">Off</span>';
@@ -1641,10 +1678,10 @@ function compareShiftCell(who, shiftId, shift){
     + '<div class="cmp-shift">' + inner + '</div></div>';
 }
 
-function showFriendDayDetail(dateStr, shift, shiftId){
+function showFriendDayDetail(dateStr, shifts, shiftId){
   const panel = document.getElementById('friend-day-detail-panel');
   if(!panel) return;
-  panel.innerHTML = buildDayDetailHTML(dateStr, shift, shiftId, friendLabel(selectedFriend) + "'s — ") +
+  panel.innerHTML = buildDayDetailHTML(dateStr, shifts, shiftId, friendLabel(selectedFriend) + "'s — ") +
     '<button class="btn secondary full" style="margin-top:10px;" onclick="closeFriendDayDetail()">Close</button>';
   panel.style.display = 'block';
   panel.scrollIntoView({behavior:'smooth', block:'center'});
@@ -1655,7 +1692,7 @@ function showCompareDayDetailMulti(dateStr, people){
   if(!panel) return;
   panel.innerHTML = people.map((p, i) =>
     (i > 0 ? '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0;">' : '') +
-    buildDayDetailHTML(dateStr, p.shift, p.shiftId, p.label + ' — ')
+    buildDayDetailHTML(dateStr, p.shifts, p.shiftId, p.label + ' — ')
   ).join('') +
     '<button class="btn secondary full" style="margin-top:10px;" onclick="closeFriendDayDetail()">Close</button>';
   panel.style.display = 'block';
@@ -3125,6 +3162,7 @@ async function importRotaIntoTemplate(){
   }));
   document.getElementById('rtpl-weeks').value = String(rtplWeeks);
   document.getElementById('rtpl-week-start').value = '0';
+  document.getElementById('rtpl-split-shifts-toggle').checked = false;
   renderRtplGrid();
   renderTemplatesBrowseList();
   if(typeof populateCopyFromSelects === 'function') populateCopyFromSelects();
@@ -3294,8 +3332,9 @@ function shiftPayPatternColumn(shift, d){
 function weekPay(weekIndex){
   let total = 0;
   for(let d=0; d<7; d++){
-    const shift = shiftTypes.find(s=>s.id===pattern[weekIndex*7+d]);
-    if(shift) total += shiftPayPatternColumn(shift, d);
+    resolveDayShifts(pattern[weekIndex*7+d], shiftTypes).forEach(shift => {
+      total += shiftPayPatternColumn(shift, d);
+    });
   }
   return total;
 }
@@ -3319,10 +3358,27 @@ function renderOriginalIncome(){
   el.innerHTML = html;
 }
 
+function onSplitShiftsToggle(checkbox){
+  if(!checkbox.checked){
+    const hasMulti = pattern.some(v => splitShiftIds(v).length > 1);
+    if(hasMulti){
+      if(!confirm('Some days have more than one shift. Turning this off will keep only the first shift on those days. Continue?')){
+        checkbox.checked = true;
+        return;
+      }
+      pattern = pattern.map(v => splitShiftIds(v)[0] || '');
+    }
+  }
+  renderGrid();
+}
+
 function renderGrid(){
   const grid = document.getElementById('pattern-grid');
   grid.innerHTML = '';
   grid.className = 'grid';
+  const splitToggle = document.getElementById('split-shifts-toggle');
+  if(pattern.some(v => splitShiftIds(v).length > 1)) splitToggle.checked = true; // reflect existing split days on load
+  const splitMode = splitToggle.checked;
   for(let w=0; w<weeks; w++){
     const marker = document.createElement('div');
     marker.className = 'week-marker';
@@ -3338,28 +3394,49 @@ function renderGrid(){
       const idx = w*7 + d;
       const realWeekday = (weekStartDay + d) % 7;
       const cell = document.createElement('div');
-      const sel = document.createElement('select');
-      sel.dataset.idx = idx;
-      const blankOpt = document.createElement('option');
-      blankOpt.value = '';
-      blankOpt.textContent = '—';
-      sel.appendChild(blankOpt);
       const currentValue = pattern[idx] || '';
-      shiftTypes.forEach(s=>{
-        const allowed = !s.allowed_days || s.allowed_days[realWeekday] !== false;
-        if(!allowed && s.id !== currentValue) return; // hide disallowed options, but never hide the day's existing assignment
-        const opt = document.createElement('option');
-        opt.value = s.id;
-        opt.textContent = s.name + (allowed ? '' : ' (not allowed this day)');
-        sel.appendChild(opt);
-      });
-      sel.value = currentValue;
-      styleSelect(sel);
-      sel.addEventListener('change', ()=>{
-        pattern[idx] = sel.value;
+      if(splitMode){
+        const currentIds = splitShiftIds(currentValue);
+        const sel = document.createElement('select');
+        sel.multiple = true;
+        sel.dataset.idx = idx;
+        shiftTypes.forEach(s=>{
+          const allowed = !s.allowed_days || s.allowed_days[realWeekday] !== false;
+          if(!allowed && !currentIds.includes(s.id)) return; // hide disallowed options, but never hide the day's existing assignment
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.name + (allowed ? '' : ' (not allowed this day)');
+          opt.selected = currentIds.includes(s.id);
+          sel.appendChild(opt);
+        });
+        sel.size = Math.max(2, Math.min(sel.options.length, 5));
+        sel.addEventListener('change', ()=>{
+          pattern[idx] = joinShiftIds(Array.from(sel.selectedOptions).map(o => o.value));
+        });
+        cell.appendChild(sel);
+      } else {
+        const sel = document.createElement('select');
+        sel.dataset.idx = idx;
+        const blankOpt = document.createElement('option');
+        blankOpt.value = '';
+        blankOpt.textContent = '—';
+        sel.appendChild(blankOpt);
+        shiftTypes.forEach(s=>{
+          const allowed = !s.allowed_days || s.allowed_days[realWeekday] !== false;
+          if(!allowed && s.id !== currentValue) return; // hide disallowed options, but never hide the day's existing assignment
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.name + (allowed ? '' : ' (not allowed this day)');
+          sel.appendChild(opt);
+        });
+        sel.value = currentValue;
         styleSelect(sel);
-      });
-      cell.appendChild(sel);
+        sel.addEventListener('change', ()=>{
+          pattern[idx] = sel.value;
+          styleSelect(sel);
+        });
+        cell.appendChild(sel);
+      }
       grid.appendChild(cell);
     }
   }
@@ -3388,14 +3465,14 @@ function renderOriginalGrid(){
       const idx = w*7 + d;
       const cell = document.createElement('div');
       cell.className = 'day-cell-readonly';
-      const shiftId = pattern[idx];
-      const shift = shiftTypes.find(s=>s.id===shiftId);
-      if(shift){
-        cell.style.background = shift.color || '#F2A93B';
+      const shifts = resolveDayShifts(pattern[idx], shiftTypes);
+      if(shifts.length){
+        cell.style.background = multiShiftBackground(shifts);
         cell.style.color = '#203143';
-        let inner = escapeHtml(shift.name);
+        let inner = escapeHtml(multiShiftNameLabel(shifts));
         if(payRates.enabled){
-          inner += '<span class="pay-line">£' + shiftPayPatternColumn(shift, d).toFixed(2) + '</span>';
+          const dayPay = shifts.reduce((sum, s) => sum + shiftPayPatternColumn(s, d), 0);
+          inner += '<span class="pay-line">£' + dayPay.toFixed(2) + '</span>';
         }
         cell.innerHTML = inner;
       } else {
@@ -3575,10 +3652,10 @@ function renderUpcomingBanner(){
   while(cursor <= limit){
     const key = dateKeyLocal(cursor);
     const shiftId = effectiveShift(key);
-    const shift = shiftTypes.find(s => s.id === shiftId);
+    const shifts = resolveDayShifts(shiftId, shiftTypes);
     const ov = allOverrides.find(o => o.override_date === key);
     const reasons = [];
-    if(shift && isArShiftName(shift.name)) reasons.push('A/R shift');
+    if(shifts.some(s => isArShiftName(s.name))) reasons.push('A/R shift');
     if(ov && ov.source === 'overtime') reasons.push('Requested overtime');
     if(ov && ov.tentative) reasons.push('Change not yet confirmed');
     if(reasons.length) items.push({ date: new Date(cursor), key, reasons });
@@ -3703,11 +3780,11 @@ function renderCalendarTab(){
     const key = dateKeyLocal(cursor);
     const isToday = key === todayKey;
     const shiftId = effectiveShift(key);
-    const shift = shiftTypes.find(s => s.id === shiftId);
+    const shifts = resolveDayShifts(shiftId, shiftTypes);
     const isHoliday = shiftId === '__holiday__';
     const isBankHoliday = bankHolidays.has(key);
     const ov = allOverrides.find(o => o.override_date === key);
-    const dayPay = (payRates.enabled && shift) ? shiftPay(shift, cursor.getDay()) : 0;
+    const dayPay = payRates.enabled ? shifts.reduce((sum, s) => sum + shiftPay(s, cursor.getDay()), 0) : 0;
 
     if(viewMode === 'list'){
       const row = document.createElement('div');
@@ -3718,9 +3795,9 @@ function renderCalendarTab(){
       let swatch = '';
       if(isHoliday){
         label += ' — <span class="cal-shift-name">Holiday</span>';
-      } else if(shift){
-        swatch = '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + (shift.color||'#F2A93B') + ';margin-right:6px;"></span>';
-        label += ' — <span class="cal-shift-name">' + escapeHtml(shift.name) + '</span>' + escapeHtml(shiftTimeLabel(shift));
+      } else if(shifts.length){
+        swatch = shifts.map(s => '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + (s.color||'#F2A93B') + ';margin-right:4px;"></span>').join('');
+        label += ' — <span class="cal-shift-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftTimeLabel(shifts));
         if(payRates.enabled) label += ' (£' + dayPay.toFixed(2) + ')';
       } else {
         label += ' — <span class="cal-shift-name">RD</span>';
@@ -3764,10 +3841,10 @@ function renderCalendarTab(){
         inner += '<span class="pay-line">Holiday</span>';
         cell.style.background = 'var(--teal)';
         cell.style.color = '#203143';
-      } else if(shift){
-        cell.style.background = shift.color || '#F2A93B';
+      } else if(shifts.length){
+        cell.style.background = multiShiftBackground(shifts);
         cell.style.color = '#203143';
-        inner += '<span class="cal-grid-name">' + escapeHtml(shift.name) + '</span><span class="pay-line">' + escapeHtml(shiftTimeLabel(shift)) + (payRates.enabled ? ' £'+dayPay.toFixed(2) : '') + '</span>';
+        inner += '<span class="cal-grid-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span><span class="pay-line">' + escapeHtml(multiShiftTimeLabel(shifts)) + (payRates.enabled ? ' £'+dayPay.toFixed(2) : '') + '</span>';
       } else {
         inner += '<span class="cal-grid-name">RD</span>';
       }
@@ -4024,6 +4101,7 @@ function loadRotaIntoEditor(v){
   document.getElementById('week-start-day').value = String(weekStartDay);
   populateAnchorWeekSelect();
   document.getElementById('rota-anchor-week').value = '1';
+  document.getElementById('split-shifts-toggle').checked = false;
   renderShiftTypeList();
   renderGrid();
   renderOriginalGrid();
@@ -4184,8 +4262,8 @@ function shiftNameForRating(dateStr){
   const shiftId = effectiveShift(dateStr);
   if(shiftId === '__holiday__') return 'Holiday';
   if(shiftId === '') return 'Rest day';
-  const shift = shiftTypes.find(s => s.id === shiftId);
-  return shift ? shift.name : '';
+  const shifts = resolveDayShifts(shiftId, shiftTypes);
+  return shifts.length ? multiShiftNameLabel(shifts) : '';
 }
 
 // ----- Shift rating -----
@@ -4436,6 +4514,20 @@ function changeRtplWeeks(){
   renderRtplGrid();
 }
 
+function onRtplSplitShiftsToggle(checkbox){
+  if(!checkbox.checked){
+    const hasMulti = rtplPattern.some(v => splitShiftIds(v).length > 1);
+    if(hasMulti){
+      if(!confirm('Some days have more than one shift. Turning this off will keep only the first shift on those days. Continue?')){
+        checkbox.checked = true;
+        return;
+      }
+      rtplPattern = rtplPattern.map(v => splitShiftIds(v)[0] || '');
+    }
+  }
+  renderRtplGrid();
+}
+
 function renderRtplGrid(){
   const grid = document.getElementById('rtpl-grid');
   if(!grid) return;
@@ -4443,6 +4535,9 @@ function renderRtplGrid(){
   grid.className = 'grid';
   const wsd = parseInt(document.getElementById('rtpl-week-start').value, 10);
   const labels = DAY_LABELS.slice(wsd).concat(DAY_LABELS.slice(0, wsd));
+  const splitToggle = document.getElementById('rtpl-split-shifts-toggle');
+  if(rtplPattern.some(v => splitShiftIds(v).length > 1)) splitToggle.checked = true; // reflect existing split days on load
+  const splitMode = splitToggle.checked;
   for(let w=0; w<rtplWeeks; w++){
     const marker = document.createElement('div');
     marker.className = 'week-marker';
@@ -4453,18 +4548,37 @@ function renderRtplGrid(){
       const idx = w*7+d;
       const realWeekday = (wsd + d) % 7;
       const cell = document.createElement('div');
-      const sel = document.createElement('select');
-      const blank = document.createElement('option'); blank.value=''; blank.textContent='—'; sel.appendChild(blank);
       const current = rtplPattern[idx] || '';
-      templates.forEach(t=>{
-        const allowed = !t.allowed_days || t.allowed_days[realWeekday] !== false;
-        if(!allowed && t.id !== current) return; // hide disallowed options, but never hide the day's existing assignment
-        const opt=document.createElement('option'); opt.value=t.id; opt.textContent=t.name + (allowed ? '' : ' (not allowed this day)'); sel.appendChild(opt);
-      });
-      sel.value = current;
-      styleRtplSelect(sel);
-      sel.addEventListener('change', ()=>{ rtplPattern[idx]=sel.value; styleRtplSelect(sel); });
-      cell.appendChild(sel); grid.appendChild(cell);
+      if(splitMode){
+        const currentIds = splitShiftIds(current);
+        const sel = document.createElement('select');
+        sel.multiple = true;
+        templates.forEach(t=>{
+          const allowed = !t.allowed_days || t.allowed_days[realWeekday] !== false;
+          if(!allowed && !currentIds.includes(t.id)) return;
+          const opt=document.createElement('option'); opt.value=t.id; opt.textContent=t.name + (allowed ? '' : ' (not allowed this day)');
+          opt.selected = currentIds.includes(t.id);
+          sel.appendChild(opt);
+        });
+        sel.size = Math.max(2, Math.min(sel.options.length, 5));
+        sel.addEventListener('change', ()=>{
+          rtplPattern[idx] = joinShiftIds(Array.from(sel.selectedOptions).map(o => o.value));
+        });
+        cell.appendChild(sel);
+      } else {
+        const sel = document.createElement('select');
+        const blank = document.createElement('option'); blank.value=''; blank.textContent='—'; sel.appendChild(blank);
+        templates.forEach(t=>{
+          const allowed = !t.allowed_days || t.allowed_days[realWeekday] !== false;
+          if(!allowed && t.id !== current) return; // hide disallowed options, but never hide the day's existing assignment
+          const opt=document.createElement('option'); opt.value=t.id; opt.textContent=t.name + (allowed ? '' : ' (not allowed this day)'); sel.appendChild(opt);
+        });
+        sel.value = current;
+        styleRtplSelect(sel);
+        sel.addEventListener('change', ()=>{ rtplPattern[idx]=sel.value; styleRtplSelect(sel); });
+        cell.appendChild(sel);
+      }
+      grid.appendChild(cell);
     }
   }
 }
@@ -4518,6 +4632,7 @@ function startEditRotaTemplate(rtpl){
   if(rtplPattern.length !== rtplWeeks*7) rtplPattern = resizePatternArray(rtplPattern, rtplWeeks);
   document.getElementById('rtpl-weeks').value = String(rtplWeeks);
   document.getElementById('rtpl-week-start').value = String(ld.week_start_day || 0);
+  document.getElementById('rtpl-split-shifts-toggle').checked = false;
   renderRtplGrid();
   document.getElementById('rtpl-submit-btn').textContent = 'Save changes';
   document.getElementById('rtpl-cancel-btn').style.display = 'block';
@@ -4532,6 +4647,7 @@ function cancelRotaTemplateEdit(){
   rtplPattern = Array(35).fill('');
   document.getElementById('rtpl-weeks').value = '5';
   document.getElementById('rtpl-week-start').value = '0';
+  document.getElementById('rtpl-split-shifts-toggle').checked = false;
   renderRtplGrid();
   document.getElementById('rtpl-submit-btn').textContent = 'Create rota template';
   document.getElementById('rtpl-cancel-btn').style.display = 'none';
@@ -4551,8 +4667,9 @@ async function applyRotaTemplate(rtpl){
   const tplPattern = ld.pattern || [];
   if(!confirm('Apply "' + escapeHtml(rtpl.name) + '" to your rota? This replaces your current pattern. Your existing shift types are kept, and any missing template shifts are added to your collection.')) return;
 
-  // Map template shift IDs → user's personal copy IDs, creating copies as needed
-  const usedIds = [...new Set(tplPattern.filter(Boolean))];
+  // Map template shift IDs → user's personal copy IDs, creating copies as needed.
+  // A pattern cell can hold several comma-joined ids (split shifts).
+  const usedIds = [...new Set(tplPattern.flatMap(v => splitShiftIds(v)))];
   const idMap = {};
   for(const tplId of usedIds){
     const existing = shiftTypes.find(s => s.source_template_id === tplId);
@@ -4570,7 +4687,7 @@ async function applyRotaTemplate(rtpl){
   }
 
   if(!rotaStart) rotaStart = new Date().toISOString().slice(0,10);
-  const newPattern = resizePatternArray(tplPattern.map(id => idMap[id] || ''), newWeeks);
+  const newPattern = resizePatternArray(tplPattern.map(v => joinShiftIds(splitShiftIds(v).map(id => idMap[id] || '').filter(Boolean))), newWeeks);
   const { error } = await sb.from('rota_settings').upsert({
     user_id: currentUser.id,
     rota_start: rotaStart,
@@ -4799,6 +4916,7 @@ async function loadAdminUserRota(userId, container, btn){
     anchorDate: base.rota_start, // stored rota_start is Week 1 by definition
     anchorWeek: 1,
     pattern: [...base.pattern],
+    splitMode: base.pattern.some(v => splitShiftIds(v).length > 1),
     shiftTypes: stRes.data || [],
     base: base,                                                    // the user's current rota (preserved when scheduling)
     schedule: Array.isArray(r && r.schedule) ? r.schedule : []     // their existing scheduled changes
@@ -4821,8 +4939,8 @@ async function loadAdminUserCalendar(userId, container, btn){
 function adminCalValueLabel(id){
   if(id === '__holiday__') return 'Holiday';
   if(id === '') return 'Rest day';
-  const s = adminEditCal.shiftTypes.find(x => x.id === id);
-  return s ? s.name : 'a shift';
+  const shifts = resolveDayShifts(id, adminEditCal.shiftTypes);
+  return shifts.length ? multiShiftNameLabel(shifts) : 'a shift';
 }
 
 function renderAdminCalEditor(container){
@@ -5014,6 +5132,30 @@ function renderAdminRotaGrid(container){
   qWrap.appendChild(qBtn); qWrap.appendChild(qStatus);
   container.appendChild(qWrap);
 
+  // Split shifts toggle
+  const splitRow = document.createElement('div');
+  splitRow.className = 'checkbox-row'; splitRow.style.marginBottom = '10px';
+  const splitCb = document.createElement('input'); splitCb.type = 'checkbox'; splitCb.id = 'admin-split-shifts-toggle';
+  splitCb.checked = ar.splitMode;
+  const splitLbl = document.createElement('label'); splitLbl.setAttribute('for', 'admin-split-shifts-toggle');
+  splitLbl.textContent = '🔀 Allow split shifts (pick more than one shift for a day)';
+  splitCb.onchange = ()=>{
+    if(!splitCb.checked){
+      const hasMulti = ar.pattern.some(v => splitShiftIds(v).length > 1);
+      if(hasMulti){
+        if(!confirm('Some days have more than one shift. Turning this off will keep only the first shift on those days. Continue?')){
+          splitCb.checked = true;
+          return;
+        }
+        ar.pattern = ar.pattern.map(v => splitShiftIds(v)[0] || '');
+      }
+    }
+    ar.splitMode = splitCb.checked;
+    renderAdminRotaGrid(container);
+  };
+  splitRow.appendChild(splitCb); splitRow.appendChild(splitLbl);
+  container.appendChild(splitRow);
+
   // Pattern grid
   const grid = document.createElement('div');
   grid.className = 'grid'; grid.style.marginBottom = '10px';
@@ -5024,35 +5166,71 @@ function renderAdminRotaGrid(container){
     for(let d=0;d<7;d++){
       const idx=w*7+d; const realWeekday=(ar.weekStartDay+d)%7;
       const cell=document.createElement('div');
-      const sel=document.createElement('select');
-      const blank=document.createElement('option'); blank.value=''; blank.textContent='—'; sel.appendChild(blank);
       const current=ar.pattern[idx]||'';
-      ar.shiftTypes.forEach(s=>{
-        const allowed=!s.allowed_days||s.allowed_days[realWeekday]!==false;
-        if(!allowed&&s.id!==current) return;
-        const opt=document.createElement('option'); opt.value=s.id; opt.textContent=s.name+(allowed?'':' (!)'); sel.appendChild(opt);
-      });
-      // Offer any shared shift template the user hasn't got yet — picking one adds it to them
-      const toOffer = templates.filter(t => !ar.shiftTypes.some(s => s.source_template_id === t.id)
-        && (!t.allowed_days || t.allowed_days[realWeekday] !== false));
-      if(toOffer.length){
-        const og=document.createElement('optgroup'); og.label='Add from templates';
-        toOffer.forEach(t=>{ const opt=document.createElement('option'); opt.value='tpl:'+t.id; opt.textContent=t.name+' (add)'; og.appendChild(opt); });
-        sel.appendChild(og);
-      }
-      sel.value=current;
-      const styleSel=()=>{ const sh=ar.shiftTypes.find(s=>s.id===sel.value); if(sh){sel.style.background=sh.color||'#F2A93B';sel.style.color='#203143';sel.style.border='none';}else{sel.style.background='var(--surface-alt)';sel.style.color='var(--text-dim)';sel.style.border='1px solid var(--border)';} };
-      styleSel();
-      sel.addEventListener('change', async ()=>{
-        if(sel.value.startsWith('tpl:')){
-          const newId = await adminEnsureShiftCopy(sel.value.slice(4));
-          ar.pattern[idx] = newId || '';
-          renderAdminRotaGrid(container); // re-render so the new shift shows in every dropdown
-          return;
+      if(ar.splitMode){
+        const currentIds = splitShiftIds(current);
+        const sel = document.createElement('select');
+        sel.multiple = true;
+        ar.shiftTypes.forEach(s=>{
+          const allowed=!s.allowed_days||s.allowed_days[realWeekday]!==false;
+          if(!allowed && !currentIds.includes(s.id)) return;
+          const opt=document.createElement('option'); opt.value=s.id; opt.textContent=s.name+(allowed?'':' (!)');
+          opt.selected = currentIds.includes(s.id);
+          sel.appendChild(opt);
+        });
+        const toOffer = templates.filter(t => !ar.shiftTypes.some(s => s.source_template_id === t.id)
+          && (!t.allowed_days || t.allowed_days[realWeekday] !== false));
+        if(toOffer.length){
+          const og=document.createElement('optgroup'); og.label='Add from templates';
+          toOffer.forEach(t=>{ const opt=document.createElement('option'); opt.value='tpl:'+t.id; opt.textContent=t.name+' (add)'; og.appendChild(opt); });
+          sel.appendChild(og);
         }
-        ar.pattern[idx]=sel.value; styleSel();
-      });
-      cell.appendChild(sel); grid.appendChild(cell);
+        sel.size = Math.max(2, Math.min(sel.options.length, 5));
+        sel.addEventListener('change', async ()=>{
+          const selectedVals = Array.from(sel.selectedOptions).map(o => o.value);
+          const tplVal = selectedVals.find(v => v.startsWith('tpl:'));
+          if(tplVal){
+            const newId = await adminEnsureShiftCopy(tplVal.slice(4));
+            const finalIds = selectedVals.filter(v => !v.startsWith('tpl:'));
+            if(newId) finalIds.push(newId);
+            ar.pattern[idx] = joinShiftIds(finalIds);
+            renderAdminRotaGrid(container); // re-render so the new shift shows in every dropdown
+            return;
+          }
+          ar.pattern[idx] = joinShiftIds(selectedVals);
+        });
+        cell.appendChild(sel);
+      } else {
+        const sel=document.createElement('select');
+        const blank=document.createElement('option'); blank.value=''; blank.textContent='—'; sel.appendChild(blank);
+        ar.shiftTypes.forEach(s=>{
+          const allowed=!s.allowed_days||s.allowed_days[realWeekday]!==false;
+          if(!allowed&&s.id!==current) return;
+          const opt=document.createElement('option'); opt.value=s.id; opt.textContent=s.name+(allowed?'':' (!)'); sel.appendChild(opt);
+        });
+        // Offer any shared shift template the user hasn't got yet — picking one adds it to them
+        const toOffer = templates.filter(t => !ar.shiftTypes.some(s => s.source_template_id === t.id)
+          && (!t.allowed_days || t.allowed_days[realWeekday] !== false));
+        if(toOffer.length){
+          const og=document.createElement('optgroup'); og.label='Add from templates';
+          toOffer.forEach(t=>{ const opt=document.createElement('option'); opt.value='tpl:'+t.id; opt.textContent=t.name+' (add)'; og.appendChild(opt); });
+          sel.appendChild(og);
+        }
+        sel.value=current;
+        const styleSel=()=>{ const sh=ar.shiftTypes.find(s=>s.id===sel.value); if(sh){sel.style.background=sh.color||'#F2A93B';sel.style.color='#203143';sel.style.border='none';}else{sel.style.background='var(--surface-alt)';sel.style.color='var(--text-dim)';sel.style.border='1px solid var(--border)';} };
+        styleSel();
+        sel.addEventListener('change', async ()=>{
+          if(sel.value.startsWith('tpl:')){
+            const newId = await adminEnsureShiftCopy(sel.value.slice(4));
+            ar.pattern[idx] = newId || '';
+            renderAdminRotaGrid(container); // re-render so the new shift shows in every dropdown
+            return;
+          }
+          ar.pattern[idx]=sel.value; styleSel();
+        });
+        cell.appendChild(sel);
+      }
+      grid.appendChild(cell);
     }
   }
   container.appendChild(grid);
@@ -5156,7 +5334,7 @@ async function applyRotaTemplateToAdmin(rtpl, container){
   const tplPattern = ld.pattern || [];
   if(!confirm('Apply "' + rtpl.name + '" to this user\'s rota? It replaces the pattern below (nothing is saved until you press Save rota). Any template shifts they don\'t have are added to their shift types.')) return;
 
-  const usedIds = [...new Set(tplPattern.filter(Boolean))];
+  const usedIds = [...new Set(tplPattern.flatMap(v => splitShiftIds(v)))];
   const idMap = {};
   for(const tplId of usedIds){
     const mapped = await adminEnsureShiftCopy(tplId);
@@ -5165,7 +5343,8 @@ async function applyRotaTemplateToAdmin(rtpl, container){
 
   ar.weeks = newWeeks;
   ar.weekStartDay = wsd;
-  ar.pattern = resizePatternArray(tplPattern.map(id => idMap[id] || ''), newWeeks);
+  ar.pattern = resizePatternArray(tplPattern.map(v => joinShiftIds(splitShiftIds(v).map(id => idMap[id] || '').filter(Boolean))), newWeeks);
+  ar.splitMode = ar.pattern.some(v => splitShiftIds(v).length > 1);
   renderAdminRotaGrid(container);
 }
 
