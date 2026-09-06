@@ -28,3 +28,11 @@ behind and conflict. Syncing first avoids surprise merge conflicts at PR time.
 - After editing the inline `<script>`, sanity-check JS syntax with `node --check` on the extracted script.
 - Two importers already exist on the Templates page (admin only): "Import duty sheets
   from PDF" (per-duty) and "Import a full rota" (multi-week). Don't remove either.
+- **Split shifts**: a rota-pattern day cell (and, incidentally, an override's `value`) is
+  normally a single shift-type id, `''` (rest day), or `'__holiday__'`. With the "Allow
+  split shifts" toggle (Setup pattern grid, admin per-user rota grid, rota-template
+  builder) a cell can hold several shift-type ids joined by commas. Always read/write
+  cell values through `splitShiftIds()` / `joinShiftIds()` / `resolveDayShifts()` in
+  `index.html` rather than assuming one id — the separate Cloudflare Worker that builds
+  the `.ics` export does NOT yet understand comma-joined ids, so a split-shift day
+  currently produces no event in the exported calendar until that Worker is updated too.
