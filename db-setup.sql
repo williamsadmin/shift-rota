@@ -164,3 +164,17 @@ alter table public.bus_ratings enable row level security;
 drop policy if exists "Users manage own bus ratings" on public.bus_ratings;
 create policy "Users manage own bus ratings" on public.bus_ratings
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- ---------------------------------------------------------------------
+-- 8. Calendar shares — the .ics live-link token. Only the owner and admins
+--    may see or create it (unlike overrides, this must NOT be world-readable
+--    or anyone could pull anyone else's live calendar feed).
+-- ---------------------------------------------------------------------
+alter table public.calendar_shares enable row level security;
+
+drop policy if exists "Anyone can view calendar_shares" on public.calendar_shares;
+drop policy if exists "Users manage own calendar share" on public.calendar_shares;
+drop policy if exists "Admins can manage any calendar share" on public.calendar_shares;
+create policy "Admins can manage any calendar share" on public.calendar_shares
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());

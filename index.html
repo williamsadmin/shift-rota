@@ -3570,17 +3570,18 @@ async function loadShareLink(){
   }
 }
 
-function copyShareLink(){
-  const box = document.getElementById('share-link-box');
-  const statusEl = document.getElementById('share-status');
-  box.select();
+function copyTextFromInput(inputEl, statusEl){
+  inputEl.select();
   let copied = false;
   try{ copied = document.execCommand('copy'); }catch(e){}
   if(!copied && navigator.clipboard){
-    navigator.clipboard.writeText(box.value).catch(()=>{});
+    navigator.clipboard.writeText(inputEl.value).catch(()=>{});
   }
-  statusEl.style.color = 'var(--teal)';
-  statusEl.textContent = 'Link copied.';
+  if(statusEl){ statusEl.style.color = 'var(--teal)'; statusEl.textContent = 'Link copied.'; }
+}
+
+function copyShareLink(){
+  copyTextFromInput(document.getElementById('share-link-box'), document.getElementById('share-status'));
 }
 
 function dateKeyLocal(d){
@@ -4859,24 +4860,31 @@ function showAdminEditProfile(p, parentDiv){
   rotaHead.textContent = 'Rota & calendar';
   const rotaEditor = document.createElement('div');
   const calEditor = document.createElement('div');
+  const linkEditor = document.createElement('div');
   const loadRotaBtn = document.createElement('button');
   loadRotaBtn.className = 'btn secondary';
   loadRotaBtn.textContent = 'Edit original rota';
   loadRotaBtn.style.cssText = 'font-size:13px;padding:6px 12px;';
-  loadRotaBtn.onclick = () => { calEditor.innerHTML=''; loadAdminUserRota(p.id, rotaEditor, loadRotaBtn); };
+  loadRotaBtn.onclick = () => { calEditor.innerHTML=''; loadCalBtn.style.display=''; linkEditor.innerHTML=''; loadLinkBtn.style.display=''; loadAdminUserRota(p.id, rotaEditor, loadRotaBtn); };
   const loadCalBtn = document.createElement('button');
   loadCalBtn.className = 'btn secondary';
   loadCalBtn.textContent = 'Edit My Calendar';
   loadCalBtn.style.cssText = 'font-size:13px;padding:6px 12px;';
-  loadCalBtn.onclick = () => { rotaEditor.innerHTML=''; loadRotaBtn.style.display=''; loadAdminUserCalendar(p.id, calEditor, loadCalBtn); };
+  loadCalBtn.onclick = () => { rotaEditor.innerHTML=''; loadRotaBtn.style.display=''; linkEditor.innerHTML=''; loadLinkBtn.style.display=''; loadAdminUserCalendar(p.id, calEditor, loadCalBtn); };
+  const loadLinkBtn = document.createElement('button');
+  loadLinkBtn.className = 'btn secondary';
+  loadLinkBtn.textContent = 'View live link';
+  loadLinkBtn.style.cssText = 'font-size:13px;padding:6px 12px;';
+  loadLinkBtn.onclick = () => { rotaEditor.innerHTML=''; loadRotaBtn.style.display=''; calEditor.innerHTML=''; loadCalBtn.style.display=''; loadAdminUserShareLink(p.id, linkEditor, loadLinkBtn); };
   const btnRow = document.createElement('div');
   btnRow.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;';
-  btnRow.appendChild(loadRotaBtn); btnRow.appendChild(loadCalBtn);
+  btnRow.appendChild(loadRotaBtn); btnRow.appendChild(loadCalBtn); btnRow.appendChild(loadLinkBtn);
   parentDiv.appendChild(rotaSep);
   parentDiv.appendChild(rotaHead);
   parentDiv.appendChild(btnRow);
   parentDiv.appendChild(rotaEditor);
   parentDiv.appendChild(calEditor);
+  parentDiv.appendChild(linkEditor);
 
   saveBtn.onclick = async ()=>{
     const newUsername = usernameInput.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
@@ -4934,6 +4942,41 @@ async function loadAdminUserCalendar(userId, container, btn){
   btn.textContent = 'Edit My Calendar'; btn.disabled = false; btn.style.display = 'none';
   adminEditCal = { userId, rota: rotaRes.data || null, overrides: ovRes.data || [], shiftTypes: stRes.data || [] };
   renderAdminCalEditor(container);
+}
+
+// Show (creating one first if needed) a user's live .ics calendar link, so
+// admins can view and copy it without the user having to share it themselves.
+async function loadAdminUserShareLink(userId, container, btn){
+  btn.textContent = 'Loading…'; btn.disabled = true;
+  let { data, error } = await sb.from('calendar_shares').select('share_token').eq('user_id', userId).maybeSingle();
+  if(!error && !data){
+    const insertRes = await sb.from('calendar_shares').insert({ user_id: userId }).select('share_token').single();
+    data = insertRes.data;
+    error = insertRes.error;
+  }
+  btn.textContent = 'View live link'; btn.disabled = false; btn.style.display = 'none';
+  container.innerHTML = '';
+  if(error || !data){
+    const note = document.createElement('p');
+    note.className = 'help'; note.style.color = 'var(--danger)';
+    note.textContent = error
+      ? (/policy|permission|row-level/i.test(error.message) ? 'Needs the "Admins can manage any calendar share" policy from db-setup.sql.' : error.message)
+      : 'Could not load or create a live link for this user.';
+    container.appendChild(note);
+    return;
+  }
+  const row = document.createElement('div'); row.className = 'row'; row.style.marginTop = '8px';
+  const boxWrap = document.createElement('div'); boxWrap.style.flex = '1';
+  const box = document.createElement('input'); box.type = 'text'; box.readOnly = true;
+  box.value = WORKER_URL + '/calendar.ics?token=' + data.share_token;
+  boxWrap.appendChild(box);
+  const copyBtn = document.createElement('button');
+  copyBtn.className = 'btn secondary'; copyBtn.textContent = 'Copy link'; copyBtn.style.whiteSpace = 'nowrap';
+  const status = document.createElement('div'); status.className = 'status';
+  copyBtn.onclick = () => copyTextFromInput(box, status);
+  row.appendChild(boxWrap); row.appendChild(copyBtn);
+  container.appendChild(row);
+  container.appendChild(status);
 }
 
 function adminCalValueLabel(id){
