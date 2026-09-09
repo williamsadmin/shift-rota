@@ -36,3 +36,15 @@ behind and conflict. Syncing first avoids surprise merge conflicts at PR time.
   `index.html` rather than assuming one id — the separate Cloudflare Worker that builds
   the `.ics` export does NOT yet understand comma-joined ids, so a split-shift day
   currently produces no event in the exported calendar until that Worker is updated too.
+- **Account type** (per-user, `profiles.account_type` — `'bus'` default or `'education'`,
+  set in the Account tab): swaps a curated list of static UI strings ("shift"→"class",
+  "rota"→"timetable" etc. — see `EDUCATION_TERM_SWAPS` and `applyAccountType()`) and
+  hides bus-only sections (duty board / GB Hours leg builder, pay tracking, bus ratings,
+  the PDF duty-sheet importer) for education accounts. It only relabels/hides static
+  chrome elements reachable by a stable selector — it does NOT touch user-entered data
+  (shift names, descriptions, company/location) and does NOT attempt to relabel every
+  occurrence of "shift"/"rota" across the whole app (e.g. some confirm() dialogs, admin
+  tools, and notification text still say "shift"/"rota"). When adding new bus-specific UI,
+  either add an entry to `EDUCATION_TERM_SWAPS` (static text) or branch on `accountType`
+  directly (dynamically-generated text) so it stays consistent, and gate new bus-only
+  sections behind `accountType === 'education'` the same way `setup-pay-section` etc. are.

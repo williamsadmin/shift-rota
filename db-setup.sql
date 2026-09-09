@@ -54,6 +54,13 @@ alter table public.profiles add column if not exists pending_location text;
 -- Covered by the existing "Users can update own profile" policy.
 alter table public.profiles add column if not exists top_tabs text[];
 
+-- What kind of account this is — changes some terminology and hides fields
+-- that don't apply (e.g. duty board / GB Hours compliance / pay are bus-driver
+-- only). Covered by the existing "Users can update own profile" policy.
+alter table public.profiles add column if not exists account_type text not null default 'bus';
+alter table public.profiles drop constraint if exists profiles_account_type_check;
+alter table public.profiles add constraint profiles_account_type_check check (account_type in ('bus','education'));
+
 -- ---------------------------------------------------------------------
 -- 3. Rotas — any logged-in user can view anyone's rota (People tab).
 --    Writes stay restricted to the owner, plus admins can manage any rota.
