@@ -2083,7 +2083,12 @@ function parseDutyPdfText(text){
     warnings.push('Could not find Sign ON/OFF/Paid Time — set times manually.');
   }
 
-  // Walk the lines building up "groups" (one per Service/Light run, plus Break rows).
+  // Walk the lines building up "groups" (one per Service/Light run, plus Break/Pay-in rows).
+  // Bold instructional lines on the source sheet ("Change blinds to...", "Leave Bus...",
+  // "Transfer passengers...", "BUS FINISH") aren't distinguishable from plain text once
+  // extracted, so any line that isn't a header, a stop+time row, or a Break/Pay-in marker
+  // is treated as a note for whichever group it's next to — before the first stop
+  // (preNotes) or after the last one (postNotes) — and folded into that leg's "extra".
   const legs = [];
   let group = null;
   const flushGroup = () => {
@@ -2096,17 +2101,21 @@ function parseDutyPdfText(text){
       route: group.route,
       from: pdfCleanStopName(first.name),
       to: pdfCleanStopName(last.name),
-      extra: ''
+      extra: group.preNotes.concat(group.postNotes).join(' ')
     });
     group = null;
   };
+
+  const isGroupHeaderOrStopLine = (l) => PDF_LEG_SKIP_RE.test(l) || /^\d{3,4}$/.test(l)
+    || /^Service\s+(\S+)/i.test(l) || /^Light$/i.test(l) || /^Journey No\./i.test(l)
+    || /^Break\/As Req\b/i.test(l) || /^PAY IN\b/i.test(l) || /^(.+?)\s+(\d{3,4})$/.test(l);
 
   for(let i = 0; i < rawLines.length; i++){
     const line = rawLines[i];
 
     const svcM = line.match(/^Service\s+(\S+)/i);
-    if(svcM){ flushGroup(); group = { route: svcM[1], stops: [] }; continue; }
-    if(/^Light$/i.test(line)){ flushGroup(); group = { route: 'Light', stops: [] }; continue; }
+    if(svcM){ flushGroup(); group = { route: svcM[1], stops: [], preNotes: [], postNotes: [] }; continue; }
+    if(/^Light$/i.test(line)){ flushGroup(); group = { route: 'Light', stops: [], preNotes: [], postNotes: [] }; continue; }
 
     const jnyM = line.match(/^Journey No\.\s*(\S+)/i);
     if(jnyM && group){ continue; }
@@ -2118,17 +2127,46 @@ function parseDutyPdfText(text){
       continue;
     }
 
-    if(/^Leave Bus/i.test(line)){
-      // Attach as a note to whichever leg was just closed (the last one pushed).
-      if(legs.length > 0) legs[legs.length-1].extra = [legs[legs.length-1].extra, line].filter(Boolean).join('; ');
+    // "PAY IN hhmm - hhmm" is its own timed entry on the sheet (cashing in between
+    // duties), distinct from a rest break — give it its own leg rather than folding
+    // it into the previous leg's destination.
+    const payInM = line.match(/^PAY IN\s+(\d{3,4})\s*-\s*(\d{3,4})/i);
+    if(payInM){
+      flushGroup();
+      legs.push({ start: pdfMilToHHMM(payInM[1]), end: pdfMilToHHMM(payInM[2]), route: 'Pay in', from: '', to: '', extra: '' });
       continue;
     }
 
     if(PDF_LEG_SKIP_RE.test(line)) continue;
 
+    // A stop's arrival/departure is sometimes printed as "NAME" on one line and
+    // "arr HHMM" / "dep HHMM" on the next — pair it back up with that name instead
+    // of taking "arr"/"dep" itself as the stop name.
+    const arrDepM = line.match(/^(?:arr|dep)\.?\s+(\d{3,4})$/i);
+    if(arrDepM && group){
+      const prevLine = i > 0 ? rawLines[i-1] : '';
+      const prevIsBareName = prevLine && !isGroupHeaderOrStopLine(prevLine);
+      const name = prevIsBareName ? prevLine : (group.stops.length ? group.stops[group.stops.length-1].name : '');
+      group.stops.push({ name, time: arrDepM[1] });
+      continue;
+    }
+
     const stopM = line.match(/^(.+?)\s+(\d{3,4})$/);
     if(stopM && group){
       group.stops.push({ name: stopM[1], time: stopM[2] });
+      continue;
+    }
+
+    // A bare line immediately followed by "arr"/"dep HHMM" is that stop's name,
+    // not an instructional note — leave it for the arr/dep line to pick up via
+    // look-back, rather than also filing it as a note here.
+    const nextLine = i + 1 < rawLines.length ? rawLines[i+1] : '';
+    if(group && /^(?:arr|dep)\.?\s+\d{3,4}$/i.test(nextLine)) continue;
+
+    // Anything else while a group is open is a bold instructional note.
+    if(group){
+      if(group.stops.length === 0) group.preNotes.push(line);
+      else group.postNotes.push(line);
     }
   }
   flushGroup();
