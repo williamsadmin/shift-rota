@@ -48,3 +48,25 @@ behind and conflict. Syncing first avoids surprise merge conflicts at PR time.
   either add an entry to `EDUCATION_TERM_SWAPS` (static text) or branch on `accountType`
   directly (dynamically-generated text) so it stays consistent, and gate new bus-only
   sections behind `accountType === 'education'` the same way `setup-pay-section` etc. are.
+- **Blocks** (which companies can see which shared templates): a shift template's
+  existing `category` field doubles as its "block" name (e.g. "Matlock Sixes", "Red
+  Arrow") — there's no separate block field. `category_companies` (category, company)
+  maps a category to the companies allowed to see it; a category with no row there is
+  hidden from non-admins entirely (deliberate — admin has to opt a company in via
+  Admin Templates → "Blocks"). Rota templates can't reuse `category` (it's already the
+  `'__rota__'` marker), so they use their own `shift_types.restricted_companies text[]`
+  column instead, same "empty = hidden" rule, set directly by admin (no self-request
+  flow for those). `userHasCategoryAccess()` / `userHasRotaTemplateAccess()` in
+  `index.html` are the single source of truth for this — always filter through them
+  rather than reading `templates`/`rotaTemplates` directly in new user-facing code.
+  **Admins bypass all of this everywhere** (both functions return true for `isAdmin`) —
+  the restriction only applies to the Templates browse list, the rota-template list, and
+  the swap-a-shift picker; admin's own rota-building tools intentionally show every
+  template regardless of block. A user can self-request an extra block beyond their
+  company's default in the Account tab ("Blocks you know") — it lands in
+  `user_block_access` as `'pending'` and needs an admin to approve it (Admin Templates →
+  "Requests to know an extra block") before it grants access. Like the rest of this
+  app's company/location scoping, enforcement is client-side only (filtering in render
+  functions) — RLS lets any authenticated user read `category_companies` and every
+  template row, so treat block names as visible-to-all-but-hidden-by-default, not as a
+  hard security boundary.

@@ -185,3 +185,49 @@ drop policy if exists "Admins can manage any calendar share" on public.calendar_
 create policy "Admins can manage any calendar share" on public.calendar_shares
   for all using (user_id = auth.uid() or public.is_admin())
   with check (user_id = auth.uid() or public.is_admin());
+
+-- ---------------------------------------------------------------------
+-- 9. Blocks — shift templates are grouped by their existing `category`
+--    field (e.g. "Matlock Sixes", "Red Arrow"), and each category is only
+--    visible to the companies listed for it here. A category with no rows
+--    here is hidden from everyone except admins (deliberate — an admin must
+--    explicitly grant a company before its drivers see that block). Rota
+--    templates can't reuse `category` (it's already the '__rota__' marker
+--    that tells them apart from shift templates), so they get their own
+--    `restricted_companies` array column instead, same "empty = hidden" rule.
+--    Admins always see everything regardless of this table, everywhere.
+-- ---------------------------------------------------------------------
+create table if not exists public.category_companies (
+  category text not null,
+  company  text not null,
+  primary key (category, company)
+);
+alter table public.category_companies enable row level security;
+
+drop policy if exists "Anyone can view category_companies" on public.category_companies;
+create policy "Anyone can view category_companies" on public.category_companies
+  for select to authenticated using (true);
+
+drop policy if exists "Admins can manage category_companies" on public.category_companies;
+create policy "Admins can manage category_companies" on public.category_companies
+  for all using (public.is_admin()) with check (public.is_admin());
+
+alter table public.shift_types add column if not exists restricted_companies text[];
+
+-- A user's self-declared extra blocks ("I also know the Two route") — starts
+-- 'pending' until an admin approves it; only then does it grant access
+-- alongside whatever their own company already grants by default.
+create table if not exists public.user_block_access (
+  user_id      uuid not null references auth.users(id) on delete cascade,
+  category     text not null,
+  status       text not null default 'pending' check (status in ('pending','approved')),
+  requested_at timestamptz default now(),
+  decided_at   timestamptz,
+  primary key (user_id, category)
+);
+alter table public.user_block_access enable row level security;
+
+drop policy if exists "Users manage own block requests" on public.user_block_access;
+create policy "Users manage own block requests" on public.user_block_access
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
