@@ -531,6 +531,17 @@
         <p class="sub">Build shift and rota templates, or import them from a PDF/text — everyone browses and adds from the Templates tab.</p>
       </header>
 
+      <section id="admin-blocks-section">
+        <p class="sec-title">Blocks — which companies can see which templates</p>
+        <p class="help" style="margin-top:0;">A shift template's Category doubles as its "block" (e.g. "Matlock Sixes", "Red Arrow"). A block with no company ticked is hidden from everyone except admins — tick a company to let its drivers see and add it.</p>
+        <div id="admin-block-categories-list"></div>
+        <p class="sec-title" style="margin-top:16px;">Rota templates — which companies can see each one</p>
+        <div id="admin-block-rota-list"></div>
+        <p class="sec-title" style="margin-top:16px;">Requests to know an extra block</p>
+        <p class="help" style="margin-top:0;">Drivers can flag an extra block they know (e.g. overtime cover) in their Account tab — approve it here to give them access.</p>
+        <div id="admin-block-requests-list"></div>
+      </section>
+
       <section id="pdf-import-section">
         <p class="sec-title">Import duty sheets from PDF</p>
         <p class="help" style="margin-top:0;margin-bottom:12px;">Upload one or more duty PDFs (like a trentbarton-style DYxx sheet). Each one is parsed into a duty board automatically and added as a shared template — review and edit before importing. Once created, any user can add it to their own rota as normal.</p>
@@ -697,6 +708,12 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           </div>
         </div>
         <div class="status" id="account-type-status"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Blocks you know</p>
+        <p class="help" style="margin-top:0;">Your company already gives you its own blocks. If you also know another block — e.g. cover or overtime on a different route — tick it here. An admin has to approve it before it shows up when swapping.</p>
+        <div id="my-blocks-list"></div>
       </section>
 
       <section>
@@ -989,6 +1006,8 @@ let allProfiles = []; // every other user's profile, for the People list
 let pinnedIds = new Set(); // ids of users I've starred
 let myCompany = null, myLocation = null;             // the current user's approved workplace
 let myPendingCompany = null, myPendingLocation = null; // their outstanding join request
+let categoryCompanyMap = {}; // shift-template category -> [companies allowed to see it]
+let myBlockAccess = {};      // category -> 'pending' | 'approved', this user's own extra-block requests
 let selectedFriend = null; // profile of the person currently being viewed
 let friendData = { rota: null, overrides: [], shiftTypes: [] };
 let selectedFriend2 = null; // optional third person in the compare view
@@ -1386,6 +1405,26 @@ function multiShiftBackground(shifts){
   const step = 100 / colors.length;
   const stops = colors.map((c,i) => c + ' ' + (i*step) + '%, ' + c + ' ' + ((i+1)*step) + '%').join(', ');
   return 'linear-gradient(90deg, ' + stops + ')';
+}
+
+// Blocks: a shift template's existing `category` field doubles as its "block"
+// name (e.g. "Matlock Sixes"). A category with no row in category_companies is
+// hidden from everyone but admins; a user also sees it if they have an
+// approved extra-block grant for that category. Admins always see everything.
+function userHasCategoryAccess(category){
+  if(isAdmin) return true;
+  if(!category) return false;
+  if(myCompany && (categoryCompanyMap[category] || []).includes(myCompany)) return true;
+  return myBlockAccess[category] === 'approved';
+}
+// Rota templates can't reuse `category` (it's the '__rota__' marker), so they
+// carry their own restricted_companies array instead — same "empty = hidden"
+// rule, but no self-request flow (admin sets it directly).
+function userHasRotaTemplateAccess(rtpl){
+  if(isAdmin) return true;
+  const companies = (rtpl && rtpl.restricted_companies) || [];
+  if(!companies.length) return false;
+  return !!myCompany && companies.includes(myCompany);
 }
 
 function renderFriendCalendar(){
@@ -2643,23 +2682,67 @@ async function saveAccountType(){
   statusEl.textContent = 'Saved.';
 }
 
+// Account tab: blocks (shift-template categories) beyond the user's own
+// company default — self-request here, an admin approves in Admin Templates.
+function renderMyBlocksList(){
+  const el = document.getElementById('my-blocks-list');
+  if(!el) return;
+  const allCategories = [...new Set(templates.map(t => t.category).filter(Boolean))].sort();
+  const extra = allCategories.filter(cat => !(myCompany && (categoryCompanyMap[cat] || []).includes(myCompany)));
+  if(extra.length === 0){
+    el.innerHTML = '<p class="empty">No other blocks to request right now.</p>';
+    return;
+  }
+  el.innerHTML = '';
+  extra.forEach(cat=>{
+    const status = myBlockAccess[cat]; // undefined | 'pending' | 'approved'
+    const row = document.createElement('label');
+    row.className = 'checkbox-row';
+    const cb = document.createElement('input'); cb.type = 'checkbox';
+    cb.checked = !!status;
+    cb.disabled = status === 'approved'; // an admin granted this — not self-revocable
+    cb.onchange = async ()=>{
+      if(cb.checked){
+        await sb.from('user_block_access').upsert({ user_id: currentUser.id, category: cat, status: 'pending' });
+        myBlockAccess[cat] = 'pending';
+      } else {
+        await sb.from('user_block_access').delete().eq('user_id', currentUser.id).eq('category', cat);
+        delete myBlockAccess[cat];
+      }
+      renderMyBlocksList();
+    };
+    const span = document.createElement('span');
+    span.textContent = cat + (status === 'approved' ? ' — approved' : status === 'pending' ? ' — pending admin approval' : '');
+    row.appendChild(cb); row.appendChild(span);
+    el.appendChild(row);
+  });
+}
+
 async function loadAccountData(){
-  const [stRes, tplRes, rotaRes, ovRes, payRes, profileRes] = await Promise.all([
+  const [stRes, tplRes, rotaRes, ovRes, payRes, profileRes, catCoRes, blockAccessRes] = await Promise.all([
     sb.from('shift_types').select('*').eq('owner_id', currentUser.id),
     sb.from('shift_types').select('*').eq('is_template', true),
     sb.from('rota_settings').select('*').eq('user_id', currentUser.id).maybeSingle(),
     sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date'),
     sb.from('pay_rates').select('*').eq('user_id', currentUser.id).maybeSingle(),
-    sb.from('profiles').select('is_admin,username,top_tabs,account_type').eq('id', currentUser.id).maybeSingle()
+    sb.from('profiles').select('is_admin,username,top_tabs,account_type,company').eq('id', currentUser.id).maybeSingle(),
+    sb.from('category_companies').select('*'),
+    sb.from('user_block_access').select('*').eq('user_id', currentUser.id)
   ]);
-  // account_type is a newer column — fall back gracefully until the
-  // db-setup.sql migration for it has been run, rather than losing
+  // account_type/company are newer columns — fall back gracefully until the
+  // db-setup.sql migration for them has been run, rather than losing
   // is_admin/username/top_tabs for everyone in the meantime.
-  if(profileRes.error && /column|account_type/i.test(profileRes.error.message || '')){
+  if(profileRes.error && /column|account_type|company/i.test(profileRes.error.message || '')){
     const retry = await sb.from('profiles').select('is_admin,username,top_tabs').eq('id', currentUser.id).maybeSingle();
     profileRes.data = retry.data;
     profileRes.error = retry.error;
   }
+  categoryCompanyMap = {};
+  (catCoRes.data || []).forEach(row => {
+    (categoryCompanyMap[row.category] = categoryCompanyMap[row.category] || []).push(row.company);
+  });
+  myBlockAccess = {};
+  (blockAccessRes.data || []).forEach(row => { myBlockAccess[row.category] = row.status; });
   shiftTypes = stRes.data || [];
   await renameLegacyOvertimeShift();
   // Separate shift templates from rota templates
@@ -2671,6 +2754,7 @@ async function loadAccountData(){
   await migrateOvertimeRequests();
   refreshOvertimeSet();
   isAdmin = (profileRes.data && profileRes.data.is_admin) || false;
+  myCompany = (profileRes.data && profileRes.data.company) || myCompany;
   accountType = (profileRes.data && profileRes.data.account_type) || 'bus';
   document.getElementById('account-type-select').value = accountType;
   applyAccountType();
@@ -2739,6 +2823,7 @@ async function loadAccountData(){
   renderShiftTypeList();
   renderTemplatesBrowseList();
   renderRotaTemplateList();
+  renderMyBlocksList();
   renderGrid();
   renderOriginalGrid();
   renderHolidayList();
@@ -2826,7 +2911,9 @@ async function addTemplateToMine(tpl){
     shiftTypes.push(data);
     renderShiftTypeList();
     renderGrid();
+    return data.id;
   }
+  return null;
 }
 
 function populateCopyFromSelects(){
@@ -2980,8 +3067,13 @@ function renderTemplatesBrowseList(){
   if(!el) return;
   el.innerHTML = '';
 
+  // Blocks: only offer categories (and templates within them) this user actually
+  // has access to — their own company's default blocks, plus any approved extra
+  // grants. Admins always see every category.
+  const accessibleTemplates = templates.filter(t => userHasCategoryAccess(t.category));
+
   const filterSelect = document.getElementById('tpl-filter');
-  const categories = [...new Set(templates.map(t => t.category).filter(Boolean))].sort();
+  const categories = [...new Set(accessibleTemplates.map(t => t.category).filter(Boolean))].sort();
   const currentFilter = filterSelect.value;
   // Keep the static "Select a category" and "All" options, then append real categories
   filterSelect.innerHTML =
@@ -2997,7 +3089,7 @@ function renderTemplatesBrowseList(){
   }
 
   const activeFilter = filterSelect.value === '__all__' ? null : filterSelect.value;
-  let visible = activeFilter ? templates.filter(t => t.category === activeFilter) : templates;
+  let visible = activeFilter ? accessibleTemplates.filter(t => t.category === activeFilter) : accessibleTemplates;
 
   const dayFilterSelect = document.getElementById('tpl-day-filter');
   const activeDayFilter = dayFilterSelect.value;
@@ -3013,7 +3105,9 @@ function renderTemplatesBrowseList(){
   if(visible.length === 0){
     el.innerHTML = '<p class="empty">' + (templates.length === 0
       ? ('No templates yet' + (isAdmin ? ' — create your first one above.' : ' — check back later.'))
-      : 'No templates match these filters.') + '</p>';
+      : (accessibleTemplates.length === 0
+        ? 'None of the available templates are visible to your company yet — ask an admin, or request an extra block in the Account tab.'
+        : 'No templates match these filters.')) + '</p>';
     return;
   }
   const dayShortNames = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
@@ -3121,6 +3215,7 @@ async function createTemplate(){
   statusEl.textContent = editingItem.tpl ? 'Template updated and synced to all unmodified copies.' : 'Template created.';
   renderTemplatesBrowseList();
   populateCopyFromSelects();
+  if(isAdmin) renderAdminBlocksSection();
 }
 
 async function deleteTemplate(id){
@@ -4027,7 +4122,14 @@ function renderSwapShiftPicker(){
     return;
   }
 
-  const items = [{ id:'', name:'Rest day', color:'' }].concat(shiftTypes)
+  // Blocks: also offer templates this user has access to but hasn't added to
+  // their own account yet — picking one adds it to them as part of the swap.
+  const availableTemplates = templates
+    .filter(t => userHasCategoryAccess(t.category))
+    .filter(t => !shiftTypes.some(s => s.source_template_id === t.id))
+    .map(t => ({ id: 'tpl:' + t.id, name: t.name, color: t.color, allowed_days: t.allowed_days, fromTemplate: true }));
+
+  const items = [{ id:'', name:'Rest day', color:'' }].concat(shiftTypes).concat(availableTemplates)
     .filter(s => s.id === '' || weekday === null || !s.allowed_days || s.allowed_days[weekday] !== false);
   const visible = term ? items.filter(s => s.name.toLowerCase().includes(term)) : items;
 
@@ -4043,7 +4145,7 @@ function renderSwapShiftPicker(){
       : '<span class="swap-pick-dot" style="background:var(--border);"></span>';
     const label = s.id === ''
       ? '<span class="swap-pick-rest">Rest day</span>'
-      : escapeHtml(s.name);
+      : escapeHtml(s.name) + (s.fromTemplate ? ' <span style="color:var(--teal);font-size:11px;">· available</span>' : '');
     return '<div class="swap-pick-item' + sel + '" data-shift-id="' + escapeHtml(s.id) + '">' + dot + label + '</div>';
   }).join('') + '</div>';
   el.querySelectorAll('.swap-pick-item').forEach(item=>{
@@ -4123,9 +4225,18 @@ function createShiftSearchPicker(items, initialId, onChange){
   };
 }
 
-function selectSwapShift(id){
+async function selectSwapShift(id){
   swapPickerRevealed = true;
-  document.getElementById('swap-to-shift').value = id;
+  if(id.startsWith('tpl:')){
+    const tplId = id.slice(4);
+    const tpl = templates.find(t => t.id === tplId);
+    if(!tpl) return;
+    const existing = shiftTypes.find(s => s.source_template_id === tplId);
+    const newId = existing ? existing.id : await addTemplateToMine(tpl);
+    document.getElementById('swap-to-shift').value = newId || '';
+  } else {
+    document.getElementById('swap-to-shift').value = id;
+  }
   renderSwapShiftPicker();
 }
 
@@ -4760,6 +4871,7 @@ async function saveRotaTemplate(){
   statusEl.style.color='var(--teal)';
   statusEl.textContent = editingRtpl ? 'Rota template updated.' : 'Rota template created.';
   renderRotaTemplateList();
+  if(isAdmin) renderAdminBlocksSection();
 }
 
 function startEditRotaTemplate(rtpl){
@@ -4850,12 +4962,14 @@ async function applyRotaTemplate(rtpl){
 function renderRotaTemplateList(){
   const el = document.getElementById('rota-templates-list');
   if(!el) return;
-  if(rotaTemplates.length === 0){
-    el.innerHTML = '<p class="empty">' + (isAdmin ? 'No rota templates yet — create one in the section above.' : 'No rota templates available yet.') + '</p>';
+  const visibleRotaTemplates = rotaTemplates.filter(rtpl => userHasRotaTemplateAccess(rtpl));
+  if(visibleRotaTemplates.length === 0){
+    el.innerHTML = '<p class="empty">' + (isAdmin ? 'No rota templates yet — create one in the section above.'
+      : (rotaTemplates.length === 0 ? 'No rota templates available yet.' : 'None are visible to your company yet — ask an admin.')) + '</p>';
     return;
   }
   el.innerHTML = '';
-  rotaTemplates.forEach(rtpl=>{
+  visibleRotaTemplates.forEach(rtpl=>{
     const ld = rtpl.legs_data || {};
     const div = document.createElement('div');
     div.className = 'off-item';
@@ -4904,6 +5018,107 @@ async function loadAdminTab(){
   allAdminProfiles = data || [];
   statusEl.textContent='';
   renderAdminAccountList();
+  renderAdminBlocksSection();
+}
+
+// Admin-only: which companies can see each shift-template category ("block")
+// and each rota template, plus approving drivers' requests for extra blocks.
+async function renderAdminBlocksSection(){
+  const catEl = document.getElementById('admin-block-categories-list');
+  const rotaEl = document.getElementById('admin-block-rota-list');
+  const reqEl = document.getElementById('admin-block-requests-list');
+  if(!catEl) return;
+
+  const reqRes = await sb.from('user_block_access').select('*').eq('status', 'pending');
+  const knownCompanies = [...new Set(allAdminProfiles.map(p => p.company).filter(Boolean))].sort();
+
+  const mkCheckboxRow = (checked, onToggle) => {
+    const cb = document.createElement('label'); cb.className = 'checkbox-row'; cb.style.margin = '0';
+    const input = document.createElement('input'); input.type = 'checkbox'; input.checked = checked;
+    input.onchange = () => onToggle(input.checked);
+    cb.appendChild(input);
+    return cb;
+  };
+
+  // Shift-template categories ("blocks")
+  const categories = [...new Set(templates.map(t => t.category).filter(Boolean))].sort();
+  catEl.innerHTML = '';
+  if(categories.length === 0){
+    catEl.innerHTML = '<p class="empty">No categorised shift templates yet — set a Category when creating one.</p>';
+  }
+  categories.forEach(cat=>{
+    const row = document.createElement('div');
+    row.className = 'off-item'; row.style.cssText = 'flex-direction:column;align-items:flex-start;gap:6px;';
+    const label = document.createElement('strong'); label.style.color = 'var(--text)'; label.textContent = cat;
+    row.appendChild(label);
+    const chipsWrap = document.createElement('div'); chipsWrap.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;';
+    knownCompanies.forEach(co=>{
+      const current = categoryCompanyMap[cat] || [];
+      const cb = mkCheckboxRow(current.includes(co), async (checked)=>{
+        if(checked) await sb.from('category_companies').insert({ category: cat, company: co });
+        else await sb.from('category_companies').delete().eq('category', cat).eq('company', co);
+        const list = categoryCompanyMap[cat] || [];
+        categoryCompanyMap[cat] = checked ? [...new Set(list.concat([co]))] : list.filter(c => c !== co);
+      });
+      cb.appendChild(document.createTextNode(' ' + co));
+      chipsWrap.appendChild(cb);
+    });
+    row.appendChild(chipsWrap);
+    catEl.appendChild(row);
+  });
+
+  // Rota templates
+  rotaEl.innerHTML = '';
+  if(rotaTemplates.length === 0){
+    rotaEl.innerHTML = '<p class="empty">No rota templates yet.</p>';
+  }
+  rotaTemplates.forEach(rtpl=>{
+    const row = document.createElement('div');
+    row.className = 'off-item'; row.style.cssText = 'flex-direction:column;align-items:flex-start;gap:6px;';
+    const label = document.createElement('strong'); label.style.color = 'var(--text)'; label.textContent = rtpl.name;
+    row.appendChild(label);
+    const chipsWrap = document.createElement('div'); chipsWrap.style.cssText = 'display:flex;gap:10px;flex-wrap:wrap;';
+    knownCompanies.forEach(co=>{
+      const current = rtpl.restricted_companies || [];
+      const cb = mkCheckboxRow(current.includes(co), async (checked)=>{
+        const list = rtpl.restricted_companies || [];
+        rtpl.restricted_companies = checked ? [...new Set(list.concat([co]))] : list.filter(c => c !== co);
+        await sb.from('shift_types').update({ restricted_companies: rtpl.restricted_companies }).eq('id', rtpl.id);
+      });
+      cb.appendChild(document.createTextNode(' ' + co));
+      chipsWrap.appendChild(cb);
+    });
+    row.appendChild(chipsWrap);
+    rotaEl.appendChild(row);
+  });
+
+  // Pending requests for extra blocks
+  reqEl.innerHTML = '';
+  const pending = reqRes.data || [];
+  if(pending.length === 0){
+    reqEl.innerHTML = '<p class="empty">No pending requests.</p>';
+  }
+  pending.forEach(reqRow=>{
+    const who = allAdminProfiles.find(p => p.id === reqRow.user_id);
+    const whoLabel = who ? (who.username ? '@' + who.username : (who.email || who.id)) : reqRow.user_id;
+    const div = document.createElement('div'); div.className = 'off-item';
+    div.innerHTML = '<span>' + escapeHtml(whoLabel) + ' wants <strong style="color:var(--text);">' + escapeHtml(reqRow.category) + '</strong></span>';
+    const btnGroup = document.createElement('span');
+    const approveBtn = document.createElement('button'); approveBtn.textContent = 'Approve'; approveBtn.style.color = 'var(--teal)';
+    approveBtn.onclick = async ()=>{
+      await sb.from('user_block_access').update({ status: 'approved', decided_at: new Date().toISOString() })
+        .eq('user_id', reqRow.user_id).eq('category', reqRow.category);
+      renderAdminBlocksSection();
+    };
+    const rejectBtn = document.createElement('button'); rejectBtn.textContent = 'Reject'; rejectBtn.style.color = 'var(--danger)'; rejectBtn.style.marginLeft = '10px';
+    rejectBtn.onclick = async ()=>{
+      await sb.from('user_block_access').delete().eq('user_id', reqRow.user_id).eq('category', reqRow.category);
+      renderAdminBlocksSection();
+    };
+    btnGroup.appendChild(approveBtn); btnGroup.appendChild(rejectBtn);
+    div.appendChild(btnGroup);
+    reqEl.appendChild(div);
+  });
 }
 
 function renderAdminAccountList(){
