@@ -521,6 +521,23 @@
         <p class="sec-title">Rota templates</p>
         <p class="help" style="margin-top:0;">Apply a full pre-built rota to your account — adds any required shifts to your collection and loads the complete pattern.</p>
         <div id="rota-templates-list"></div>
+        <div id="rtpl-apply-box" style="display:none;margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--surface-alt);">
+          <p class="help" style="margin-top:0;font-weight:600;color:var(--text);" id="rtpl-apply-name"></p>
+          <div class="row">
+            <div style="max-width:200px;">
+              <label>Start from this date</label>
+              <input type="date" id="rtpl-apply-anchor-date" onchange="onRtplApplyAnchorChange()">
+            </div>
+            <div style="max-width:180px;">
+              <label>That date is in…</label>
+              <select id="rtpl-apply-anchor-week"></select>
+            </div>
+          </div>
+          <button class="btn full" id="rtpl-apply-schedule-btn" style="margin-top:8px;" onclick="confirmApplyRotaTemplate('schedule')">Start this rota from that date (keep my current rota before)</button>
+          <button class="btn secondary full" style="margin-top:8px;" onclick="confirmApplyRotaTemplate('replace')">Replace my whole rota now instead</button>
+          <button class="btn secondary full" style="margin-top:8px;" onclick="cancelApplyRotaTemplate()">Cancel</button>
+          <div class="status" id="rtpl-apply-status"></div>
+        </div>
       </section>
     </div>
 
@@ -3247,6 +3264,26 @@ function changeWeekStartDay(){
   renderCalendarTab();
 }
 
+// Delete one specific week row from the pattern (any week, not just the last)
+// — everything after it shifts up by one, unlike shrinking the week count via
+// the dropdown, which only ever drops weeks off the end.
+function deleteWeekFromPattern(weekIndex){
+  if(weeks <= 1){ alert('Your pattern needs at least 1 week.'); return; }
+  if(!confirm('Delete Week ' + (weekIndex+1) + ' from the pattern? Every week after it shifts up by one. This doesn\'t save until you press "Save my original rota".')) return;
+  pattern.splice(weekIndex * 7, 7);
+  weeks -= 1;
+  document.getElementById('weeks-select').value = String(weeks);
+  const anchorSel = document.getElementById('rota-anchor-week');
+  if(anchorSel){
+    let anchorWeek = parseInt(anchorSel.value, 10) || 1;
+    if(anchorWeek > weekIndex + 1) anchorWeek -= 1;
+    populateAnchorWeekSelect();
+    anchorSel.value = String(Math.max(1, Math.min(anchorWeek, weeks)));
+  }
+  recomputeRotaStartFromAnchor();
+  renderGrid();
+}
+
 function changeWeeks(){
   const newWeeks = parseInt(document.getElementById('weeks-select').value, 10);
   const newLen = newWeeks * 7;
@@ -3617,7 +3654,17 @@ function renderGrid(){
   for(let w=0; w<weeks; w++){
     const marker = document.createElement('div');
     marker.className = 'week-marker';
-    marker.textContent = 'Week ' + (w+1);
+    marker.style.cssText += 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+    const markerLabel = document.createElement('span');
+    markerLabel.textContent = 'Week ' + (w+1);
+    marker.appendChild(markerLabel);
+    if(weeks > 1){
+      const delWeekBtn = document.createElement('button');
+      delWeekBtn.type = 'button'; delWeekBtn.textContent = 'Delete week';
+      delWeekBtn.style.cssText = 'font-size:10px;letter-spacing:normal;text-transform:none;color:var(--danger);background:none;border:none;padding:0;cursor:pointer;';
+      delWeekBtn.onclick = () => deleteWeekFromPattern(w);
+      marker.appendChild(delWeekBtn);
+    }
     grid.appendChild(marker);
     getDayLabels().forEach(d=>{
       const lbl = document.createElement('div');
@@ -4308,16 +4355,23 @@ function styleSelect(sel){
 // The date field is an "anchor": the real date of any known day, plus which week
 // of the pattern it falls in. rotaStart (the canonical Day-1/Week-1 date) is
 // derived from it — the day-of-week column is inferred from the date itself.
-function recomputeRotaStartFromAnchor(){
-  const anchorDate = document.getElementById('rota-start').value;
-  if(!anchorDate){ rotaStart = ''; return; }
-  const weekNum = parseInt(document.getElementById('rota-anchor-week').value, 10) || 1;
+// Derive the canonical Week-1/Day-1 date from a known date + which week of the
+// pattern it falls in. Shared by the pattern-editor anchor step and the rota
+// template "apply" flow.
+function computeRotaStartFromAnchor(anchorDate, weekNum, wsd){
+  if(!anchorDate) return '';
   const d = new Date(anchorDate + 'T00:00:00');
-  const dowCol = (((d.getDay() - weekStartDay) % 7) + 7) % 7;
-  const anchorIndex = (weekNum - 1) * 7 + dowCol;
+  const dowCol = (((d.getDay() - wsd) % 7) + 7) % 7;
+  const anchorIndex = ((weekNum || 1) - 1) * 7 + dowCol;
   const start = new Date(d);
   start.setDate(start.getDate() - anchorIndex);
-  rotaStart = dateKeyLocal(start);
+  return dateKeyLocal(start);
+}
+
+function recomputeRotaStartFromAnchor(){
+  const anchorDate = document.getElementById('rota-start').value;
+  const weekNum = parseInt(document.getElementById('rota-anchor-week').value, 10) || 1;
+  rotaStart = computeRotaStartFromAnchor(anchorDate, weekNum, weekStartDay);
 }
 
 function populateAnchorWeekSelect(){
@@ -4913,12 +4967,61 @@ async function deleteRotaTemplate(id){
   renderRotaTemplateList();
 }
 
-async function applyRotaTemplate(rtpl){
+// Applying a rota template no longer overwrites the current rota outright —
+// it opens an anchor picker so the user can either schedule it to take over
+// from a future date (keeping their current rota before then, same as the
+// "scheduled rota versions" feature) or replace their whole rota immediately.
+let pendingRotaTemplateApply = null;
+
+function startApplyRotaTemplate(rtpl){
+  pendingRotaTemplateApply = rtpl;
+  document.getElementById('rtpl-apply-name').textContent = 'Applying "' + rtpl.name + '"';
+  document.getElementById('rtpl-apply-anchor-date').value = '';
+  document.getElementById('rtpl-apply-status').textContent = '';
+  populateRtplApplyAnchorWeekSelect();
+  const box = document.getElementById('rtpl-apply-box');
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function cancelApplyRotaTemplate(){
+  pendingRotaTemplateApply = null;
+  document.getElementById('rtpl-apply-box').style.display = 'none';
+}
+
+function populateRtplApplyAnchorWeekSelect(){
+  const sel = document.getElementById('rtpl-apply-anchor-week');
+  if(!sel || !pendingRotaTemplateApply) return;
+  const w = (pendingRotaTemplateApply.legs_data || {}).weeks || 5;
+  const prev = parseInt(sel.value, 10) || 1;
+  sel.innerHTML = '';
+  for(let i=1;i<=w;i++){ const o=document.createElement('option'); o.value=i; o.textContent='Week '+i; sel.appendChild(o); }
+  sel.value = String(Math.min(prev, w));
+}
+
+function onRtplApplyAnchorChange(){}
+
+async function confirmApplyRotaTemplate(mode){
+  const rtpl = pendingRotaTemplateApply;
+  if(!rtpl) return;
+  const statusEl = document.getElementById('rtpl-apply-status');
+  const anchorDate = document.getElementById('rtpl-apply-anchor-date').value;
+  if(!anchorDate){ statusEl.style.color='var(--danger)'; statusEl.textContent='Pick the date to start from.'; return; }
+  const anchorWeek = parseInt(document.getElementById('rtpl-apply-anchor-week').value, 10) || 1;
+
+  if(mode === 'schedule'){
+    const todayKey = dateKeyLocal(new Date());
+    if(anchorDate <= todayKey && !confirm('That start date isn\'t in the future — days from then will use the new rota. Continue?')) return;
+  } else if(!confirm('Replace your whole rota with "' + rtpl.name + '" now? Your existing shift types are kept, any missing template shifts are added to your collection, and booked holidays/swaps stay.')){
+    return;
+  }
+
   const ld = rtpl.legs_data || {};
   const newWeeks = ld.weeks || 5;
   const wsd = ld.week_start_day || 0;
   const tplPattern = ld.pattern || [];
-  if(!confirm('Apply "' + escapeHtml(rtpl.name) + '" to your rota? This replaces your current pattern. Your existing shift types are kept, and any missing template shifts are added to your collection.')) return;
+
+  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Applying…';
 
   // Map template shift IDs → user's personal copy IDs, creating copies as needed.
   // A pattern cell can hold several comma-joined ids (split shifts).
@@ -4938,25 +5041,26 @@ async function applyRotaTemplate(rtpl){
       if(data){ shiftTypes.push(data); idMap[tplId] = data.id; }
     }
   }
-
-  if(!rotaStart) rotaStart = new Date().toISOString().slice(0,10);
   const newPattern = resizePatternArray(tplPattern.map(v => joinShiftIds(splitShiftIds(v).map(id => idMap[id] || '').filter(Boolean))), newWeeks);
-  const { error } = await sb.from('rota_settings').upsert({
-    user_id: currentUser.id,
-    rota_start: rotaStart,
-    weeks: newWeeks, week_start_day: wsd, original_pattern: newPattern,
-    updated_at: new Date().toISOString()
-  });
-  if(error){ alert('Could not apply template: ' + error.message); return; }
+  const newRotaStart = computeRotaStartFromAnchor(anchorDate, anchorWeek, wsd);
 
-  weeks = newWeeks; weekStartDay = wsd; pattern = newPattern;
-  document.getElementById('weeks-select').value = String(weeks);
-  document.getElementById('week-start-day').value = String(weekStartDay);
-  document.getElementById('rota-start').value = rotaStart;
-  populateAnchorWeekSelect();
-  document.getElementById('rota-anchor-week').value = '1';
-  renderShiftTypeList(); renderGrid(); renderOriginalGrid(); renderCalendarTab();
-  switchTab('setup');
+  if(mode === 'replace'){
+    editingRotaVersion = null;
+    baseRota = { rota_start: newRotaStart, weeks: newWeeks, week_start_day: wsd, pattern: newPattern };
+    loadRotaIntoEditor(baseRota);
+  } else {
+    const seed = { effective_from: anchorDate, rota_start: newRotaStart, weeks: newWeeks, week_start_day: wsd, pattern: newPattern };
+    rotaSchedule = rotaSchedule.filter(s => s.effective_from !== anchorDate).concat([seed]);
+    editingRotaVersion = anchorDate;
+    loadRotaIntoEditor(seed);
+  }
+  renderRotaVersionSelect();
+  const ok = await persistRota(statusEl, mode === 'replace' ? 'Rota replaced.' : 'Saved — new rota starts ' + fmtDateLabel(anchorDate) + '.');
+  if(ok){
+    renderShiftTypeList();
+    cancelApplyRotaTemplate();
+    switchTab('setup');
+  }
 }
 
 function renderRotaTemplateList(){
@@ -4982,7 +5086,7 @@ function renderRotaTemplateList(){
     const applyBtn = document.createElement('button');
     applyBtn.textContent = accountType === 'education' ? 'Apply to my timetable' : 'Apply to my rota';
     applyBtn.style.color = 'var(--teal)';
-    applyBtn.onclick = ()=>applyRotaTemplate(rtpl);
+    applyBtn.onclick = ()=>startApplyRotaTemplate(rtpl);
     btnGroup.appendChild(applyBtn);
     if(isAdmin){
       const editBtn = document.createElement('button');
