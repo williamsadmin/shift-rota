@@ -231,3 +231,41 @@ drop policy if exists "Users manage own block requests" on public.user_block_acc
 create policy "Users manage own block requests" on public.user_block_access
   for all using (user_id = auth.uid() or public.is_admin())
   with check (user_id = auth.uid() or public.is_admin());
+
+-- ---------------------------------------------------------------------
+-- 10. Live tracker — a personal share link (same idea as calendar_shares)
+--     that lets an unauthenticated viewer see roughly where the owner is on
+--     today's duty right now. Resolved entirely server-side by the Cloudflare
+--     Worker using the service-role key, same as the .ics export — the app
+--     never lets an anonymous viewer query rota_settings/shift_types directly.
+-- ---------------------------------------------------------------------
+create table if not exists public.tracker_shares (
+  user_id     uuid not null references auth.users(id) on delete cascade primary key,
+  share_token uuid not null default gen_random_uuid() unique,
+  created_at  timestamptz default now()
+);
+alter table public.tracker_shares enable row level security;
+
+drop policy if exists "Admins can manage any tracker share" on public.tracker_shares;
+create policy "Admins can manage any tracker share" on public.tracker_shares
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
+-- Maps a duty leg's free-text route label (e.g. "6.1", as typed into a
+-- shift's duty board) to bustimes.org's own identifier for that service, so
+-- the Worker can look up live vehicles without guessing. Admin-managed,
+-- one-off setup per route label you actually use.
+create table if not exists public.bustimes_service_map (
+  route_text    text primary key,
+  bustimes_slug text not null,
+  updated_at    timestamptz default now()
+);
+alter table public.bustimes_service_map enable row level security;
+
+drop policy if exists "Anyone can view bustimes_service_map" on public.bustimes_service_map;
+create policy "Anyone can view bustimes_service_map" on public.bustimes_service_map
+  for select to authenticated using (true);
+
+drop policy if exists "Admins can manage bustimes_service_map" on public.bustimes_service_map;
+create policy "Admins can manage bustimes_service_map" on public.bustimes_service_map
+  for all using (public.is_admin()) with check (public.is_admin());

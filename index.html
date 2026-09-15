@@ -17,6 +17,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <style>
   :root{
     --bg:#203143; --surface:#273C52; --surface-alt:#2E4660; --border:#375473;
@@ -188,6 +190,17 @@
   </section>
 </div>
 
+<!-- LIVE TRACKER — public, unauthenticated view for a shared ?track= link -->
+<div id="tracker-screen" style="display:none;max-width:520px;margin:calc(20px + env(safe-area-inset-top)) auto 40px;padding:0 16px;">
+  <p class="eyebrow" id="tracker-eyebrow">Live tracker</p>
+  <h1 id="tracker-title">Loading…</h1>
+  <p class="sub" id="tracker-sub"></p>
+  <div id="tracker-map" style="height:280px;border-radius:10px;overflow:hidden;margin:14px 0;display:none;background:var(--surface-alt);"></div>
+  <div id="tracker-status-box" class="help"></div>
+  <div id="tracker-stops-list"></div>
+  <p class="help" style="margin-top:16px;font-size:11px;">Updates automatically. Position is approximate and depends on live data availability.</p>
+</div>
+
 <!-- MAIN APP -->
 <div id="app-screen">
   <div class="topbar">
@@ -332,6 +345,20 @@
               <button class="btn secondary" onclick="copyShareLink()" style="white-space:nowrap;">Copy link</button>
             </div>
             <div class="status" id="share-status"></div>
+          </div>
+        </details>
+      </section>
+
+      <section>
+        <details class="collapsible-section">
+          <summary class="sec-title">Share my live tracker</summary>
+          <div style="margin-top:12px;">
+            <p class="help" style="margin-top:0;">One link — shows whoever has it roughly where you are on today's shift, live, while you're on duty. No account needed to view it. Experimental: depends on live bus-tracking data being available for your route.</p>
+            <div class="row">
+              <div><input type="text" id="tracker-link-box" readonly></div>
+              <button class="btn secondary" onclick="copyTrackerLink()" style="white-space:nowrap;">Copy link</button>
+            </div>
+            <div class="status" id="tracker-link-status"></div>
           </div>
         </details>
       </section>
@@ -557,6 +584,18 @@
         <p class="sec-title" style="margin-top:16px;">Requests to know an extra block</p>
         <p class="help" style="margin-top:0;">Drivers can flag an extra block they know (e.g. overtime cover) in their Account tab — approve it here to give them access.</p>
         <div id="admin-block-requests-list"></div>
+      </section>
+
+      <section id="admin-bustimes-section">
+        <p class="sec-title">Live tracker — bustimes.org route mapping</p>
+        <p class="help" style="margin-top:0;">The live tracker looks up real buses on bustimes.org. It needs to know bustimes.org's own identifier for each route text used in duty boards (e.g. "6.1"). Experimental — bustimes.org's exact live-data format hasn't been verified from this environment, so this may need adjusting once tested against a real link.</p>
+        <div class="row">
+          <div><label>Route text (as typed in a duty leg)</label><input type="text" id="bustimes-map-route" placeholder="e.g. 6.1"></div>
+          <div><label>bustimes.org service slug</label><input type="text" id="bustimes-map-slug" placeholder="e.g. trentbarton-6"></div>
+        </div>
+        <button class="btn secondary" type="button" onclick="addBustimesMapping()">Save mapping</button>
+        <div class="status" id="bustimes-map-status"></div>
+        <div id="admin-bustimes-map-list" style="margin-top:10px;"></div>
       </section>
 
       <section id="pdf-import-section">
@@ -2837,6 +2876,7 @@ async function loadAccountData(){
   await recompileDutyBoards();
 
   await loadShareLink();
+  await loadTrackerShareLink();
   renderShiftTypeList();
   renderTemplatesBrowseList();
   renderRotaTemplateList();
@@ -3862,6 +3902,113 @@ function copyTextFromInput(inputEl, statusEl){
   if(statusEl){ statusEl.style.color = 'var(--teal)'; statusEl.textContent = 'Link copied.'; }
 }
 
+async function loadTrackerShareLink(){
+  let { data, error } = await sb.from('tracker_shares').select('share_token').eq('user_id', currentUser.id).maybeSingle();
+  if(!error && !data){
+    const insertRes = await sb.from('tracker_shares').insert({ user_id: currentUser.id }).select('share_token').single();
+    data = insertRes.data;
+    error = insertRes.error;
+  }
+  const box = document.getElementById('tracker-link-box');
+  const statusEl = document.getElementById('tracker-link-status');
+  if(!box) return;
+  if(data){
+    box.value = location.origin + location.pathname + '?track=' + data.share_token;
+  } else if(error && statusEl && /relation|tracker_shares|does not exist/i.test(error.message || '')){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Needs a one-off database update — run the tracker_shares block from db-setup.sql.';
+  }
+}
+
+function copyTrackerLink(){
+  copyTextFromInput(document.getElementById('tracker-link-box'), document.getElementById('tracker-link-status'));
+}
+
+// ---------- Live tracker — public, unauthenticated view for a ?track= link ----------
+function getTrackerTokenFromURL(){
+  try{ return new URLSearchParams(window.location.search).get('track'); }catch(e){ return null; }
+}
+
+let trackerPollTimer = null, trackerMap = null, trackerMarker = null;
+
+async function initTrackerView(token){
+  document.getElementById('tracker-screen').style.display = 'block';
+  await loadTrackerData(token);
+  if(trackerPollTimer) clearInterval(trackerPollTimer);
+  trackerPollTimer = setInterval(()=>loadTrackerData(token), 20000);
+}
+
+async function loadTrackerData(token){
+  const titleEl = document.getElementById('tracker-title');
+  const statusBox = document.getElementById('tracker-status-box');
+  try{
+    const res = await fetch(WORKER_URL + '/tracker.json?token=' + encodeURIComponent(token));
+    const data = await res.json();
+    if(!res.ok || data.error){
+      titleEl.textContent = 'Not available';
+      document.getElementById('tracker-sub').textContent = '';
+      statusBox.textContent = data.error || 'Could not load this tracker.';
+      document.getElementById('tracker-map').style.display = 'none';
+      document.getElementById('tracker-stops-list').innerHTML = '';
+      return;
+    }
+    renderTrackerView(data);
+  }catch(e){
+    statusBox.textContent = 'Could not reach the live tracker — check your connection.';
+  }
+}
+
+function renderTrackerView(data){
+  const titleEl = document.getElementById('tracker-title');
+  const subEl = document.getElementById('tracker-sub');
+  const statusBox = document.getElementById('tracker-status-box');
+  const stopsEl = document.getElementById('tracker-stops-list');
+  const mapBox = document.getElementById('tracker-map');
+
+  titleEl.textContent = data.ownerLabel ? data.ownerLabel + "'s live shift" : 'Live shift';
+
+  if(!data.onDuty){
+    subEl.textContent = '';
+    statusBox.textContent = data.message || 'Not currently on a shift.';
+    mapBox.style.display = 'none';
+    stopsEl.innerHTML = '';
+    return;
+  }
+
+  const leg = data.currentLeg || {};
+  subEl.textContent = (leg.route ? 'Service ' + leg.route + ' — ' : '') + (leg.from || '') + (leg.to ? ' → ' + leg.to : '');
+
+  if(data.vehicle && data.vehicle.lat != null && data.vehicle.lon != null){
+    mapBox.style.display = 'block';
+    if(!trackerMap){
+      trackerMap = L.map('tracker-map');
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+      }).addTo(trackerMap);
+    }
+    const pos = [data.vehicle.lat, data.vehicle.lon];
+    trackerMap.setView(pos, 14);
+    if(trackerMarker) trackerMarker.setLatLng(pos);
+    else trackerMarker = L.marker(pos).addTo(trackerMap);
+    statusBox.textContent = data.vehicle.statusText || 'Live position found.';
+  } else {
+    mapBox.style.display = 'none';
+    statusBox.textContent = (data.vehicle && data.vehicle.statusText)
+      || 'No live position found for this service right now — showing the scheduled timings below.';
+  }
+
+  if(Array.isArray(data.stops) && data.stops.length){
+    stopsEl.innerHTML = '<div class="off-item" style="flex-direction:column;align-items:stretch;">' +
+      data.stops.map(s => '<div style="display:flex;justify-content:space-between;padding:4px 0;' + (s.current ? 'color:var(--amber);font-weight:600;' : '') + '">'
+        + '<span>' + escapeHtml(s.name) + '</span>'
+        + '<span>' + escapeHtml(s.scheduled || '') + (s.eta ? ' <span style="color:var(--teal);">· live ' + escapeHtml(s.eta) + '</span>' : '') + '</span>'
+        + '</div>').join('') +
+      '</div>';
+  } else {
+    stopsEl.innerHTML = '';
+  }
+}
+
 function copyShareLink(){
   copyTextFromInput(document.getElementById('share-link-box'), document.getElementById('share-status'));
 }
@@ -4772,12 +4919,17 @@ function escapeHtml(str){
   return div.innerHTML;
 }
 
-loadRecentColors();
-renderRecentColors();
-renderLegRows('st');
-renderLegRows('tpl');
-loadBankHolidays();
-checkExistingSession();
+const trackerToken = getTrackerTokenFromURL();
+if(trackerToken){
+  initTrackerView(trackerToken);
+} else {
+  loadRecentColors();
+  renderRecentColors();
+  renderLegRows('st');
+  renderLegRows('tpl');
+  loadBankHolidays();
+  checkExistingSession();
+}
 
 // =====================================================================
 // TEMPLATE COPY AUTO-SYNC
@@ -5123,6 +5275,59 @@ async function loadAdminTab(){
   statusEl.textContent='';
   renderAdminAccountList();
   renderAdminBlocksSection();
+  renderAdminBustimesMap();
+}
+
+// Admin-only: manage the route-text -> bustimes.org service slug lookup the
+// live tracker uses. The Worker does the actual matching; this just edits
+// the small lookup table it reads.
+async function renderAdminBustimesMap(){
+  const el = document.getElementById('admin-bustimes-map-list');
+  if(!el) return;
+  const { data, error } = await sb.from('bustimes_service_map').select('*').order('route_text');
+  if(error){
+    el.innerHTML = '<p class="empty">' + (/relation|bustimes_service_map|does not exist/i.test(error.message || '')
+      ? 'Needs a one-off database update — run the bustimes_service_map block from db-setup.sql.'
+      : escapeHtml(error.message)) + '</p>';
+    return;
+  }
+  const rows = data || [];
+  if(rows.length === 0){
+    el.innerHTML = '<p class="empty">No mappings yet.</p>';
+    return;
+  }
+  el.innerHTML = '';
+  rows.forEach(row=>{
+    const div = document.createElement('div'); div.className = 'off-item';
+    div.innerHTML = '<span><strong style="color:var(--text);">' + escapeHtml(row.route_text) + '</strong>'
+      + ' <span style="color:var(--text-dim);">→</span> ' + escapeHtml(row.bustimes_slug) + '</span>';
+    const rm = document.createElement('button'); rm.textContent = 'Remove'; rm.style.color = 'var(--danger)';
+    rm.onclick = async ()=>{
+      await sb.from('bustimes_service_map').delete().eq('route_text', row.route_text);
+      renderAdminBustimesMap();
+    };
+    div.appendChild(rm);
+    el.appendChild(div);
+  });
+}
+
+async function addBustimesMapping(){
+  const statusEl = document.getElementById('bustimes-map-status');
+  const routeText = document.getElementById('bustimes-map-route').value.trim();
+  const slug = document.getElementById('bustimes-map-slug').value.trim();
+  if(!routeText || !slug){ statusEl.style.color='var(--danger)'; statusEl.textContent='Enter both a route text and a bustimes.org slug.'; return; }
+  const { error } = await sb.from('bustimes_service_map').upsert({ route_text: routeText, bustimes_slug: slug, updated_at: new Date().toISOString() });
+  if(error){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = /relation|bustimes_service_map|does not exist/i.test(error.message)
+      ? 'Needs a one-off database update — run the bustimes_service_map block from db-setup.sql.'
+      : error.message;
+    return;
+  }
+  document.getElementById('bustimes-map-route').value = '';
+  document.getElementById('bustimes-map-slug').value = '';
+  statusEl.style.color = 'var(--teal)'; statusEl.textContent = 'Saved.';
+  renderAdminBustimesMap();
 }
 
 // Admin-only: which companies can see each shift-template category ("block")
@@ -5859,6 +6064,7 @@ async function wipeUserData(p){
     sb.from('overrides').delete().eq('user_id', p.id),
     sb.from('pay_rates').delete().eq('user_id', p.id),
     sb.from('calendar_shares').delete().eq('user_id', p.id),
+    sb.from('tracker_shares').delete().eq('user_id', p.id),
     sb.from('friendships').delete().or('user_a.eq.' + p.id + ',user_b.eq.' + p.id)
   ]);
   alert('Data wiped for ' + (p.email||p.id) + '.');
