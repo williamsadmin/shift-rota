@@ -70,3 +70,19 @@ behind and conflict. Syncing first avoids surprise merge conflicts at PR time.
   functions) — RLS lets any authenticated user read `category_companies` and every
   template row, so treat block names as visible-to-all-but-hidden-by-default, not as a
   hard security boundary.
+- **Live tracker** (`?track=<token>` on the deployed URL — see `tracker-screen` /
+  `initTrackerView()` in `index.html`): a public, unauthenticated page showing roughly
+  where the owner is on today's duty right now. Like the `.ics` export, this is resolved
+  entirely by the **separate Cloudflare Worker** (`/tracker.json?token=`) using the
+  service-role key — the app never lets an anonymous viewer query `rota_settings` /
+  `shift_types` directly, since RLS on those only allows `authenticated` reads. The
+  Worker finds the leg covering (or next after) the current time in the owner's
+  `shift_types.legs_data`, looks up that leg's `route` text in `bustimes_service_map`
+  (admin-managed, Admin Templates → "Live tracker") to get bustimes.org's service slug,
+  then fetches `https://bustimes.org/vehicles.json?service=<slug>` for a live position.
+  **The bustimes.org integration (`fetchLiveVehicle()` in the Worker) is unverified** —
+  written from general knowledge of the site, not tested live, since `bustimes.org` is
+  network-blocked from the environment this was built in. If it stops returning a
+  position, check what that endpoint actually returns now and fix the parsing there;
+  everything else (duty/leg matching, the share link, the map/list UI) is tested and
+  solid independent of whether bustimes.org cooperates.
