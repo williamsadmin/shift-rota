@@ -3930,7 +3930,7 @@ function getTrackerTokenFromURL(){
 }
 
 let trackerPollTimer = null, trackerMap = null, trackerMarker = null;
-let lastTrackerData = null, trackerExpandedRuns = null;
+let lastTrackerData = null;
 
 async function initTrackerView(token){
   document.getElementById('auth-screen').style.display = 'none';
@@ -3961,15 +3961,6 @@ async function loadTrackerData(token){
   }
 }
 
-// Toggles one run section open/closed and re-renders from the last loaded
-// data (no need to re-fetch just to expand/collapse a section).
-function toggleTrackerRun(idx){
-  if(!trackerExpandedRuns) trackerExpandedRuns = new Set();
-  if(trackerExpandedRuns.has(idx)) trackerExpandedRuns.delete(idx);
-  else trackerExpandedRuns.add(idx);
-  if(lastTrackerData) renderTrackerView(lastTrackerData);
-}
-
 function renderTrackerView(data){
   const titleEl = document.getElementById('tracker-title');
   const subEl = document.getElementById('tracker-sub');
@@ -3984,7 +3975,6 @@ function renderTrackerView(data){
     statusBox.textContent = data.message || 'Not currently on a shift.';
     mapBox.style.display = 'none';
     stopsEl.innerHTML = '';
-    trackerExpandedRuns = null; // so the next on-duty render re-opens the actual current run
     return;
   }
 
@@ -4010,27 +4000,13 @@ function renderTrackerView(data){
       || 'No live position found for this service right now — showing the scheduled timings below.';
   }
 
-  if(Array.isArray(data.runs) && data.runs.length){
-    // Sections open by default: whichever run contains the leg being tracked
-    // right now. Re-renders (every 20s poll) keep whatever the viewer has
-    // manually expanded/collapsed since — see toggleTrackerRun().
-    if(!trackerExpandedRuns){
-      trackerExpandedRuns = new Set();
-      data.runs.forEach((run, i) => { if(run.current) trackerExpandedRuns.add(i); });
-    }
-    stopsEl.innerHTML = data.runs.map((run, i) => {
-      const isOpen = trackerExpandedRuns.has(i);
-      const legsHtml = run.legs.map(s => '<div style="display:flex;justify-content:space-between;padding:4px 0 4px 16px;' + (s.current ? 'color:var(--amber);font-weight:600;' : '') + '">'
+  if(Array.isArray(data.stops) && data.stops.length){
+    stopsEl.innerHTML = '<div class="off-item" style="flex-direction:column;align-items:stretch;">' +
+      data.stops.map(s => '<div style="display:flex;justify-content:space-between;padding:4px 0;' + (s.current ? 'color:var(--amber);font-weight:600;' : '') + '">'
         + '<span>' + escapeHtml(s.name) + '</span>'
         + '<span>' + escapeHtml(s.scheduled || '') + (s.eta ? ' <span style="color:var(--teal);">· live ' + escapeHtml(s.eta) + '</span>' : '') + '</span>'
-        + '</div>').join('');
-      return '<div class="off-item" style="flex-direction:column;align-items:stretch;">'
-        + '<div onclick="toggleTrackerRun(' + i + ')" style="cursor:pointer;display:flex;justify-content:space-between;padding:4px 0;font-weight:600;' + (run.current ? 'color:var(--amber);' : '') + '">'
-        + '<span>' + (isOpen ? '▾' : '▸') + ' Run ' + (i + 1) + ' · ' + escapeHtml(run.label || '') + '</span>'
-        + '</div>'
-        + '<div style="display:' + (isOpen ? 'block' : 'none') + ';">' + legsHtml + '</div>'
-        + '</div>';
-    }).join('');
+        + '</div>').join('') +
+      '</div>';
   } else {
     stopsEl.innerHTML = '';
   }
