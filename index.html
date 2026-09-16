@@ -3932,6 +3932,7 @@ function getTrackerTokenFromURL(){
 let trackerPollTimer = null, trackerMap = null, trackerMarker = null;
 
 async function initTrackerView(token){
+  document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('tracker-screen').style.display = 'block';
   await loadTrackerData(token);
   if(trackerPollTimer) clearInterval(trackerPollTimer);
