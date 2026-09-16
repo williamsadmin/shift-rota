@@ -3930,7 +3930,7 @@ function getTrackerTokenFromURL(){
 }
 
 let trackerPollTimer = null, trackerMap = null, trackerMarker = null;
-let trackerDoneLine = null, trackerRemainingLine = null;
+let trackerDoneLine = null, trackerRemainingLine = null, trackerStopMarkers = [];
 let lastTrackerData = null;
 let trackerLegExpanded = new Set(), trackerLegStopsCache = {};
 
@@ -3990,16 +3990,19 @@ function renderTrackerView(data){
     mapBox.style.display = 'block';
     if(!trackerMap){
       trackerMap = L.map('tracker-map');
-      // Dark basemap to match bustimes.org's own tracking map (CARTO's free
-      // "dark matter" tiles — no API key needed).
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        maxZoom: 19, subdomains: 'abcd',
-        attribution: '&copy; OpenStreetMap contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
+      // Dark basemap to match bustimes.org's own tracking map. Esri's Dark
+      // Gray Canvas — free/keyless, unlike CARTO's dark tiles which started
+      // requiring an API key.
+      L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 16,
+        attribution: 'Tiles &copy; Esri &mdash; Esri, DeLorme, NAVTEQ'
       }).addTo(trackerMap);
     }
 
     if(trackerDoneLine){ trackerMap.removeLayer(trackerDoneLine); trackerDoneLine = null; }
     if(trackerRemainingLine){ trackerMap.removeLayer(trackerRemainingLine); trackerRemainingLine = null; }
+    trackerStopMarkers.forEach(m => trackerMap.removeLayer(m));
+    trackerStopMarkers = [];
 
     const bounds = [];
     if(hasRoute){
@@ -4011,6 +4014,15 @@ function renderTrackerView(data){
       if(data.route.remainingPath.length){
         trackerRemainingLine = L.polyline(data.route.remainingPath, { color: '#7c5cff', weight: 5 }).addTo(trackerMap);
         bounds.push(...data.route.remainingPath);
+      }
+      if(Array.isArray(data.route.remainingStops)){
+        data.route.remainingStops.forEach(s => {
+          const marker = L.circleMarker([s.lat, s.lon], { radius: 5, color: '#fff', weight: 2, fillColor: '#7c5cff', fillOpacity: 1 })
+            .bindTooltip(escapeHtml(s.name))
+            .addTo(trackerMap);
+          trackerStopMarkers.push(marker);
+          bounds.push([s.lat, s.lon]);
+        });
       }
     }
 
