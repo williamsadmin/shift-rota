@@ -3930,6 +3930,7 @@ function getTrackerTokenFromURL(){
 }
 
 let trackerPollTimer = null, trackerMap = null, trackerMarker = null;
+let trackerDoneLine = null, trackerRemainingLine = null;
 let lastTrackerData = null;
 let trackerLegExpanded = new Set(), trackerLegStopsCache = {};
 
@@ -3982,7 +3983,10 @@ function renderTrackerView(data){
   const leg = data.currentLeg || {};
   subEl.textContent = (leg.route ? 'Service ' + leg.route + ' — ' : '') + (leg.from || '') + (leg.to ? ' → ' + leg.to : '');
 
-  if(data.vehicle && data.vehicle.lat != null && data.vehicle.lon != null){
+  const hasVehiclePos = data.vehicle && data.vehicle.lat != null && data.vehicle.lon != null;
+  const hasRoute = data.route && (data.route.donePath.length || data.route.remainingPath.length);
+
+  if(hasVehiclePos || hasRoute){
     mapBox.style.display = 'block';
     if(!trackerMap){
       trackerMap = L.map('tracker-map');
@@ -3990,10 +3994,35 @@ function renderTrackerView(data){
         maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
       }).addTo(trackerMap);
     }
-    const pos = [data.vehicle.lat, data.vehicle.lon];
-    trackerMap.setView(pos, 14);
-    if(trackerMarker) trackerMarker.setLatLng(pos);
-    else trackerMarker = L.marker(pos).addTo(trackerMap);
+
+    if(trackerDoneLine){ trackerMap.removeLayer(trackerDoneLine); trackerDoneLine = null; }
+    if(trackerRemainingLine){ trackerMap.removeLayer(trackerRemainingLine); trackerRemainingLine = null; }
+
+    const bounds = [];
+    if(hasRoute){
+      if(data.route.donePath.length){
+        trackerDoneLine = L.polyline(data.route.donePath, { color: '#8a8a8a', weight: 4 }).addTo(trackerMap);
+        bounds.push(...data.route.donePath);
+      }
+      if(data.route.remainingPath.length){
+        trackerRemainingLine = L.polyline(data.route.remainingPath, { color: '#3388ff', weight: 4, dashArray: '6,6' }).addTo(trackerMap);
+        bounds.push(...data.route.remainingPath);
+      }
+    }
+
+    if(hasVehiclePos){
+      const pos = [data.vehicle.lat, data.vehicle.lon];
+      if(trackerMarker) trackerMarker.setLatLng(pos);
+      else trackerMarker = L.marker(pos).addTo(trackerMap);
+      bounds.push(pos);
+    } else if(trackerMarker){
+      trackerMap.removeLayer(trackerMarker);
+      trackerMarker = null;
+    }
+
+    if(bounds.length > 1) trackerMap.fitBounds(bounds, { padding: [20, 20] });
+    else if(bounds.length === 1) trackerMap.setView(bounds[0], 14);
+
     statusBox.textContent = data.vehicle.statusText || 'Live position found.';
   } else {
     mapBox.style.display = 'none';
