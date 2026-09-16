@@ -588,10 +588,10 @@
 
       <section id="admin-bustimes-section">
         <p class="sec-title">Live tracker — bustimes.org route mapping</p>
-        <p class="help" style="margin-top:0;">The live tracker looks up real buses on bustimes.org. It needs to know bustimes.org's own identifier for each route text used in duty boards (e.g. "6.1"). Experimental — bustimes.org's exact live-data format hasn't been verified from this environment, so this may need adjusting once tested against a real link.</p>
+        <p class="help" style="margin-top:0;">The live tracker looks up real buses on bustimes.org, matched to each route text used in duty boards (e.g. "6.1") by bustimes.org's own numeric service ID — not the same as the route number. Find it by opening <code>https://bustimes.org/api/services/?operator=&lt;OPERATOR CODE&gt;</code> (e.g. TBTN for trentbarton) in a browser and finding the route by its "line_name", then copying its "id".</p>
         <div class="row">
           <div><label>Route text (as typed in a duty leg)</label><input type="text" id="bustimes-map-route" placeholder="e.g. 6.1"></div>
-          <div><label>bustimes.org service slug</label><input type="text" id="bustimes-map-slug" placeholder="paste the bustimes.org service link or slug"></div>
+          <div><label>bustimes.org numeric service ID</label><input type="text" id="bustimes-map-slug" placeholder="e.g. 9124" inputmode="numeric"></div>
         </div>
         <button class="btn secondary" type="button" onclick="addBustimesMapping()">Save mapping</button>
         <div class="status" id="bustimes-map-status"></div>
@@ -3931,6 +3931,7 @@ function getTrackerTokenFromURL(){
 
 let trackerPollTimer = null, trackerMap = null, trackerMarker = null;
 let lastTrackerData = null;
+let trackerLegExpanded = new Set(), trackerLegStopsCache = {};
 
 async function initTrackerView(token){
   document.getElementById('auth-screen').style.display = 'none';
@@ -4002,14 +4003,58 @@ function renderTrackerView(data){
 
   if(Array.isArray(data.stops) && data.stops.length){
     stopsEl.innerHTML = '<div class="off-item" style="flex-direction:column;align-items:stretch;">' +
-      data.stops.map(s => '<div style="display:flex;justify-content:space-between;padding:4px 0;' + (s.current ? 'color:var(--amber);font-weight:600;' : '') + '">'
-        + '<span>' + escapeHtml(s.name) + '</span>'
-        + '<span>' + escapeHtml(s.scheduled || '') + (s.eta ? ' <span style="color:var(--teal);">· live ' + escapeHtml(s.eta) + '</span>' : '') + '</span>'
-        + '</div>').join('') +
+      data.stops.map((s, i) => {
+        const key = s.start + '|' + s.end;
+        const isOpen = trackerLegExpanded.has(key);
+        return '<div onclick="toggleLegStops(\'' + key + '\',\'' + s.start + '\',\'' + s.end + '\')" style="cursor:pointer;display:flex;justify-content:space-between;padding:4px 0;' + (s.current ? 'color:var(--amber);font-weight:600;' : '') + '">'
+          + '<span>' + escapeHtml(s.name) + '</span>'
+          + '<span>' + escapeHtml(s.scheduled || '') + (s.eta ? ' <span style="color:var(--teal);">· live ' + escapeHtml(s.eta) + '</span>' : '') + '</span>'
+          + '</div>'
+          + '<div id="leg-stops-' + escapeHtml(key) + '" style="display:' + (isOpen ? 'block' : 'none') + ';padding:0 0 6px 14px;font-size:13px;color:var(--text-dim);"></div>';
+      }).join('') +
       '</div>';
+    // Re-populate any sections the viewer already had open (e.g. survives the 20s poll refresh).
+    trackerLegExpanded.forEach(key => renderLegStopsBox(key));
   } else {
     stopsEl.innerHTML = '';
   }
+}
+
+function renderLegStopsBox(key){
+  const box = document.getElementById('leg-stops-' + key);
+  if(!box) return;
+  const cached = trackerLegStopsCache[key];
+  if(!cached){ box.textContent = 'Loading stop times…'; return; }
+  if(cached.error){ box.textContent = cached.error; return; }
+  box.innerHTML = cached.stops.map(s => '<div style="display:flex;justify-content:space-between;padding:2px 0;">'
+    + '<span>' + escapeHtml(s.name) + '</span>'
+    + '<span>' + escapeHtml(s.scheduled || '') + (s.actual ? ' <span style="color:var(--teal);">· actual ' + escapeHtml(s.actual) + '</span>' : '') + '</span>'
+    + '</div>').join('');
+}
+
+async function toggleLegStops(key, legStart, legEnd){
+  const box = document.getElementById('leg-stops-' + key);
+  if(!box) return;
+  if(trackerLegExpanded.has(key)){
+    trackerLegExpanded.delete(key);
+    box.style.display = 'none';
+    return;
+  }
+  trackerLegExpanded.add(key);
+  box.style.display = 'block';
+  if(trackerLegStopsCache[key]){ renderLegStopsBox(key); return; }
+  box.textContent = 'Loading stop times…';
+  try{
+    const res = await fetch(WORKER_URL + '/tracker-leg.json?token=' + encodeURIComponent(getTrackerTokenFromURL())
+      + '&start=' + encodeURIComponent(legStart) + '&end=' + encodeURIComponent(legEnd));
+    const data = await res.json();
+    trackerLegStopsCache[key] = (!res.ok || data.error || !Array.isArray(data.stops))
+      ? { error: data.error || 'Could not load stop times for this leg.' }
+      : { stops: data.stops };
+  }catch(e){
+    trackerLegStopsCache[key] = { error: 'Could not reach bustimes.org — check your connection.' };
+  }
+  renderLegStopsBox(key);
 }
 
 function copyShareLink(){
@@ -5314,22 +5359,13 @@ async function renderAdminBustimesMap(){
   });
 }
 
-// Accepts either the bare slug (e.g. "60-the-sixes-derby-belper") or a full
-// bustimes.org page URL you'd naturally copy-paste (e.g.
-// "https://bustimes.org/services/60-the-sixes-derby-belper") and returns
-// just the slug the live-lookup endpoint (vehicles.json?service=<slug>) needs.
-function normalizeBustimesSlug(input){
-  const trimmed = String(input || '').trim();
-  const m = trimmed.match(/bustimes\.org\/services\/([^/?#]+)/i);
-  return m ? m[1] : trimmed.replace(/\/+$/, '');
-}
-
 async function addBustimesMapping(){
   const statusEl = document.getElementById('bustimes-map-status');
   const routeText = document.getElementById('bustimes-map-route').value.trim();
-  const slug = normalizeBustimesSlug(document.getElementById('bustimes-map-slug').value);
-  if(!routeText || !slug){ statusEl.style.color='var(--danger)'; statusEl.textContent='Enter both a route text and a bustimes.org slug.'; return; }
-  const { error } = await sb.from('bustimes_service_map').upsert({ route_text: routeText, bustimes_slug: slug, updated_at: new Date().toISOString() });
+  const serviceId = document.getElementById('bustimes-map-slug').value.trim();
+  if(!routeText || !serviceId){ statusEl.style.color='var(--danger)'; statusEl.textContent='Enter both a route text and a bustimes.org numeric service ID.'; return; }
+  if(!/^\d+$/.test(serviceId)){ statusEl.style.color='var(--danger)'; statusEl.textContent='That should be the numeric service ID (e.g. 9124), not a route name or URL — see the note above.'; return; }
+  const { error } = await sb.from('bustimes_service_map').upsert({ route_text: routeText, bustimes_slug: serviceId, updated_at: new Date().toISOString() });
   if(error){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = /relation|bustimes_service_map|does not exist/i.test(error.message)
