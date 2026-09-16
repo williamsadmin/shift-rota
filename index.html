@@ -3990,8 +3990,11 @@ function renderTrackerView(data){
     mapBox.style.display = 'block';
     if(!trackerMap){
       trackerMap = L.map('tracker-map');
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19, attribution: '&copy; OpenStreetMap contributors'
+      // Dark basemap to match bustimes.org's own tracking map (CARTO's free
+      // "dark matter" tiles — no API key needed).
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        maxZoom: 19, subdomains: 'abcd',
+        attribution: '&copy; OpenStreetMap contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
       }).addTo(trackerMap);
     }
 
@@ -4001,11 +4004,12 @@ function renderTrackerView(data){
     const bounds = [];
     if(hasRoute){
       if(data.route.donePath.length){
-        trackerDoneLine = L.polyline(data.route.donePath, { color: '#8a8a8a', weight: 4 }).addTo(trackerMap);
+        // A dotted/beaded look for the driven portion, echoing bustimes.org's own style.
+        trackerDoneLine = L.polyline(data.route.donePath, { color: '#e8e8e8', weight: 5, opacity: 0.85, dashArray: '1,9', lineCap: 'round' }).addTo(trackerMap);
         bounds.push(...data.route.donePath);
       }
       if(data.route.remainingPath.length){
-        trackerRemainingLine = L.polyline(data.route.remainingPath, { color: '#3388ff', weight: 4, dashArray: '6,6' }).addTo(trackerMap);
+        trackerRemainingLine = L.polyline(data.route.remainingPath, { color: '#7c5cff', weight: 5 }).addTo(trackerMap);
         bounds.push(...data.route.remainingPath);
       }
     }
