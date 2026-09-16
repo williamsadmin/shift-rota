@@ -591,7 +591,7 @@
         <p class="help" style="margin-top:0;">The live tracker looks up real buses on bustimes.org. It needs to know bustimes.org's own identifier for each route text used in duty boards (e.g. "6.1"). Experimental — bustimes.org's exact live-data format hasn't been verified from this environment, so this may need adjusting once tested against a real link.</p>
         <div class="row">
           <div><label>Route text (as typed in a duty leg)</label><input type="text" id="bustimes-map-route" placeholder="e.g. 6.1"></div>
-          <div><label>bustimes.org service slug</label><input type="text" id="bustimes-map-slug" placeholder="e.g. trentbarton-6"></div>
+          <div><label>bustimes.org service slug</label><input type="text" id="bustimes-map-slug" placeholder="paste the bustimes.org service link or slug"></div>
         </div>
         <button class="btn secondary" type="button" onclick="addBustimesMapping()">Save mapping</button>
         <div class="status" id="bustimes-map-status"></div>
@@ -5312,10 +5312,20 @@ async function renderAdminBustimesMap(){
   });
 }
 
+// Accepts either the bare slug (e.g. "60-the-sixes-derby-belper") or a full
+// bustimes.org page URL you'd naturally copy-paste (e.g.
+// "https://bustimes.org/services/60-the-sixes-derby-belper") and returns
+// just the slug the live-lookup endpoint (vehicles.json?service=<slug>) needs.
+function normalizeBustimesSlug(input){
+  const trimmed = String(input || '').trim();
+  const m = trimmed.match(/bustimes\.org\/services\/([^/?#]+)/i);
+  return m ? m[1] : trimmed.replace(/\/+$/, '');
+}
+
 async function addBustimesMapping(){
   const statusEl = document.getElementById('bustimes-map-status');
   const routeText = document.getElementById('bustimes-map-route').value.trim();
-  const slug = document.getElementById('bustimes-map-slug').value.trim();
+  const slug = normalizeBustimesSlug(document.getElementById('bustimes-map-slug').value);
   if(!routeText || !slug){ statusEl.style.color='var(--danger)'; statusEl.textContent='Enter both a route text and a bustimes.org slug.'; return; }
   const { error } = await sb.from('bustimes_service_map').upsert({ route_text: routeText, bustimes_slug: slug, updated_at: new Date().toISOString() });
   if(error){
