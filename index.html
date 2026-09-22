@@ -4074,7 +4074,9 @@ function renderLegStopsBox(key){
   const cached = trackerLegStopsCache[key];
   if(!cached){ box.textContent = 'Loading stop times…'; return; }
   if(cached.error){ box.textContent = cached.error; return; }
-  box.innerHTML = cached.stops.map(s => '<div style="display:flex;justify-content:space-between;padding:2px 0;">'
+  const statusHtml = cached.statusText
+    ? '<div style="padding:2px 0 6px;color:var(--amber);">' + escapeHtml(cached.statusText) + '</div>' : '';
+  box.innerHTML = statusHtml + cached.stops.map(s => '<div style="display:flex;justify-content:space-between;padding:2px 0;' + (s.remaining ? 'font-weight:600;color:var(--text);' : '') + '">'
     + '<span>' + escapeHtml(s.name) + '</span>'
     + '<span>' + escapeHtml(s.scheduled || '') + (s.actual ? ' <span style="color:var(--teal);">· actual ' + escapeHtml(s.actual) + '</span>' : '') + '</span>'
     + '</div>').join('');
@@ -4098,7 +4100,7 @@ async function toggleLegStops(key, legStart, legEnd){
     const data = await res.json();
     trackerLegStopsCache[key] = (!res.ok || data.error || !Array.isArray(data.stops))
       ? { error: data.error || 'Could not load stop times for this leg.' }
-      : { stops: data.stops };
+      : { stops: data.stops, statusText: data.statusText };
   }catch(e){
     trackerLegStopsCache[key] = { error: 'Could not reach bustimes.org — check your connection.' };
   }
