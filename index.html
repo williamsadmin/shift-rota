@@ -4076,7 +4076,7 @@ function renderLegStopsBox(key){
   if(cached.error){ box.textContent = cached.error; return; }
   const statusHtml = cached.statusText
     ? '<div style="padding:2px 0 6px;color:var(--amber);">' + escapeHtml(cached.statusText) + '</div>' : '';
-  box.innerHTML = statusHtml + cached.stops.map(s => '<div style="display:flex;justify-content:space-between;padding:2px 0;font-weight:600;' + (s.remaining ? 'color:var(--amber);' : 'color:var(--text-dim);') + '">'
+  box.innerHTML = statusHtml + cached.stops.map(s => '<div style="display:flex;justify-content:space-between;padding:2px 0;' + (s.timingPoint ? 'font-weight:600;' : '') + (s.remaining ? 'color:var(--amber);' : 'color:var(--text-dim);') + '">'
     + '<span>' + escapeHtml(s.name) + '</span>'
     + '<span>' + escapeHtml(s.scheduled || '') + (s.actual ? ' <span style="color:var(--teal);">· actual ' + escapeHtml(s.actual) + '</span>' : '') + '</span>'
     + '</div>').join('');
