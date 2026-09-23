@@ -3973,7 +3973,8 @@ function renderTrackerView(data){
   const stopsEl = document.getElementById('tracker-stops-list');
   const mapBox = document.getElementById('tracker-map');
 
-  titleEl.textContent = data.ownerLabel ? data.ownerLabel + "'s live shift" : 'Live shift';
+  const trackedName = data.ownerLabel && data.ownerLabel.startsWith('@') ? data.ownerLabel.slice(1) : '';
+  titleEl.textContent = trackedName ? 'The ' + trackedName.charAt(0).toUpperCase() + trackedName.slice(1) + ' Tracker' : 'Live Tracker';
 
   if(!data.onDuty){
     subEl.textContent = '';
@@ -4102,7 +4103,7 @@ async function toggleLegStops(key, legStart, legEnd){
       ? { error: data.error || 'Could not load stop times for this leg.' }
       : { stops: data.stops, statusText: data.statusText };
   }catch(e){
-    trackerLegStopsCache[key] = { error: 'Could not reach bustimes.org — check your connection.' };
+    trackerLegStopsCache[key] = { error: 'Could not reach the tracker — check your connection.' };
   }
   renderLegStopsBox(key);
 }
