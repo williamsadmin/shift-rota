@@ -4109,13 +4109,18 @@ function renderTrackerView(data){
   if(Array.isArray(data.stops) && data.stops.length){
     stopsEl.innerHTML = '<div class="off-item" style="flex-direction:column;align-items:stretch;">' +
       data.stops.map((s, i) => {
+        // Only a real run (has a route and a shown time) has anything to look
+        // up — Break/FUEL/PAY IN rows aren't clickable, same as in the
+        // next-7-days preview.
+        const canExpand = !!(s.route && s.scheduled);
         const key = s.start + '|' + s.end;
-        const isOpen = trackerLegExpanded.has(key);
-        return '<div onclick="toggleLegStops(\'' + key + '\',\'' + s.start + '\',\'' + s.end + '\')" style="cursor:pointer;display:flex;justify-content:space-between;padding:4px 0;' + (s.current ? 'color:var(--amber);font-weight:600;' : '') + '">'
+        const isOpen = canExpand && trackerLegExpanded.has(key);
+        const rowAttrs = canExpand ? ' onclick="toggleLegStops(\'' + key + '\',\'' + s.start + '\',\'' + s.end + '\')" style="cursor:pointer;display:flex;justify-content:space-between;padding:4px 0;' : ' style="cursor:default;display:flex;justify-content:space-between;padding:4px 0;';
+        return '<div' + rowAttrs + (s.current ? 'color:var(--amber);font-weight:600;' : '') + '">'
           + '<span>' + escapeHtml(s.name) + '</span>'
           + '<span>' + escapeHtml(s.scheduled || '') + (s.eta ? ' <span style="color:var(--teal);">· live ' + escapeHtml(s.eta) + '</span>' : '') + '</span>'
           + '</div>'
-          + '<div id="leg-stops-' + escapeHtml(key) + '" style="display:' + (isOpen ? 'block' : 'none') + ';padding:0 0 6px 14px;font-size:13px;color:var(--text-dim);"></div>';
+          + (canExpand ? '<div id="leg-stops-' + escapeHtml(key) + '" style="display:' + (isOpen ? 'block' : 'none') + ';padding:0 0 6px 14px;font-size:13px;color:var(--text-dim);"></div>' : '');
       }).join('') +
       '</div>';
     // Re-populate any sections the viewer already had open (e.g. survives the 20s poll refresh).
