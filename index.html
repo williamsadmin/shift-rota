@@ -4182,7 +4182,11 @@ async function toggleTrackerUpcoming(){
   }
 }
 
+let trackerUpcomingDays = [];
+const trackerUpcomingExpanded = new Set();
+
 function renderTrackerUpcoming(days){
+  trackerUpcomingDays = days;
   const box = document.getElementById('tracker-upcoming');
   if(!box) return;
   box.innerHTML = days.map(d => {
@@ -4195,9 +4199,28 @@ function renderTrackerUpcoming(days){
     } else {
       line = 'Rest day';
     }
-    return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);">'
-      + '<span>' + escapeHtml(dateLabel) + '</span><span>' + escapeHtml(line) + '</span></div>';
+    // Only worth expanding if there's an actual leg-by-leg breakdown to show.
+    const hasLegs = !d.isHoliday && d.shifts.some(s => Array.isArray(s.legs) && s.legs.length);
+    const isOpen = hasLegs && trackerUpcomingExpanded.has(d.date);
+    const rowAttrs = hasLegs ? ' style="cursor:pointer;" onclick="toggleTrackerUpcomingDay(\'' + d.date + '\')"' : '';
+    let html = '<div style="display:flex;justify-content:space-between;padding:4px 0;"' + rowAttrs + '>'
+      + '<span>' + escapeHtml(dateLabel) + (hasLegs ? (isOpen ? ' ▾' : ' ▸') : '') + '</span>'
+      + '<span>' + escapeHtml(line) + '</span></div>';
+    if(isOpen){
+      html += d.shifts.filter(s => Array.isArray(s.legs) && s.legs.length).map(s =>
+        '<p class="help" style="margin:4px 0 2px 10px;font-weight:600;color:var(--text);">' + escapeHtml(s.name) + '</p>'
+        + s.legs.map(l => '<div style="display:flex;justify-content:space-between;padding:1px 0 1px 10px;font-size:13px;color:var(--text-dim);">'
+          + '<span>' + escapeHtml(l.name) + '</span><span>' + escapeHtml(l.scheduled || '') + '</span></div>').join('')
+      ).join('');
+    }
+    return '<div style="border-bottom:1px solid var(--border);padding-bottom:2px;">' + html + '</div>';
   }).join('');
+}
+
+function toggleTrackerUpcomingDay(date){
+  if(trackerUpcomingExpanded.has(date)) trackerUpcomingExpanded.delete(date);
+  else trackerUpcomingExpanded.add(date);
+  renderTrackerUpcoming(trackerUpcomingDays);
 }
 
 function copyShareLink(){
