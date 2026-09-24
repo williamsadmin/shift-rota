@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>Redirecting…</title></head>
+<body>
+<script>
+  // GitHub Pages serves this file for any path that doesn't match a real
+  // file in the repo. Used here so a shared live-tracker link can read as a
+  // plain path (e.g. /theryantracker) instead of exposing ?track=<token>
+  // directly — a single path segment is forwarded on as that query param.
+  // A path that doesn't correspond to any real share link just falls
+  // through to the app's own "Tracker not found" message, same as an
+  // invalid ?track= value would.
+  var slug = location.pathname.replace(/^\/+|\/+$/g, '');
+  if(slug && !slug.includes('/')){
+    location.replace('/?track=' + encodeURIComponent(slug));
+  } else {
+    location.replace('/');
+  }
+</script>
+</body>
+</html>
