@@ -4209,18 +4209,57 @@ function renderTrackerUpcoming(days){
     if(isOpen){
       html += d.shifts.filter(s => Array.isArray(s.legs) && s.legs.length).map(s =>
         '<p class="help" style="margin:4px 0 2px 10px;font-weight:600;color:var(--text);">' + escapeHtml(s.name) + '</p>'
-        + s.legs.map(l => '<div style="display:flex;justify-content:space-between;padding:1px 0 1px 10px;font-size:13px;color:var(--text-dim);">'
-          + '<span>' + escapeHtml(l.name) + '</span><span>' + escapeHtml(l.scheduled || '') + '</span></div>').join('')
+        + s.legs.map(l => {
+          // A real run (has a route and a shown time) can be tapped for its
+          // scheduled stop times; Break/FUEL/PAY IN rows can't be looked up.
+          const canExpand = !!(l.route && l.scheduled);
+          const legKey = d.date + '|' + l.start + '|' + l.end;
+          const legIsOpen = canExpand && trackerLegExpanded.has(legKey);
+          const legAttrs = canExpand ? ' style="cursor:pointer;" onclick="toggleUpcomingLegStops(\'' + d.date + '\',\'' + l.start + '\',\'' + l.end + '\')"' : ' style="cursor:default;"';
+          return '<div style="display:flex;justify-content:space-between;padding:1px 0 1px 10px;font-size:13px;color:var(--text-dim);"' + legAttrs + '>'
+            + '<span>' + escapeHtml(l.name) + '</span><span>' + escapeHtml(l.scheduled || '') + '</span></div>'
+            + (canExpand ? '<div id="leg-stops-' + escapeHtml(legKey) + '" style="display:' + (legIsOpen ? 'block' : 'none') + ';padding:0 0 4px 20px;font-size:12px;color:var(--text-dim);"></div>' : '');
+        }).join('')
       ).join('');
     }
     return '<div style="border-bottom:1px solid var(--border);padding-bottom:2px;">' + html + '</div>';
   }).join('');
+  // Re-populate any leg-stop sections the viewer already had open, in this
+  // list or the main tracker's own (renderLegStopsBox no-ops if its box
+  // isn't in the current DOM).
+  trackerLegExpanded.forEach(key => renderLegStopsBox(key));
 }
 
 function toggleTrackerUpcomingDay(date){
   if(trackerUpcomingExpanded.has(date)) trackerUpcomingExpanded.delete(date);
   else trackerUpcomingExpanded.add(date);
   renderTrackerUpcoming(trackerUpcomingDays);
+}
+
+async function toggleUpcomingLegStops(dateStr, legStart, legEnd){
+  const key = dateStr + '|' + legStart + '|' + legEnd;
+  const box = document.getElementById('leg-stops-' + key);
+  if(!box) return;
+  if(trackerLegExpanded.has(key)){
+    trackerLegExpanded.delete(key);
+    box.style.display = 'none';
+    return;
+  }
+  trackerLegExpanded.add(key);
+  box.style.display = 'block';
+  if(trackerLegStopsCache[key]){ renderLegStopsBox(key); return; }
+  box.textContent = 'Loading stop times…';
+  try{
+    const res = await fetch(WORKER_URL + '/tracker-leg-day.json?token=' + encodeURIComponent(getTrackerTokenFromURL())
+      + '&date=' + encodeURIComponent(dateStr) + '&start=' + encodeURIComponent(legStart) + '&end=' + encodeURIComponent(legEnd));
+    const data = await res.json();
+    trackerLegStopsCache[key] = (!res.ok || data.error || !Array.isArray(data.stops))
+      ? { error: data.error || 'Could not load stop times for this leg.' }
+      : { stops: data.stops, statusText: data.statusText };
+  }catch(e){
+    trackerLegStopsCache[key] = { error: 'Could not reach the tracker — check your connection.' };
+  }
+  renderLegStopsBox(key);
 }
 
 function copyShareLink(){
