@@ -198,6 +198,8 @@
   <div id="tracker-map" style="height:280px;border-radius:10px;overflow:hidden;margin:14px 0;display:none;background:var(--surface-alt);"></div>
   <div id="tracker-status-box" class="help"></div>
   <div id="tracker-stops-list"></div>
+  <button class="btn secondary full" id="tracker-upcoming-btn" style="margin-top:14px;" onclick="toggleTrackerUpcoming()">📅 Show next 7 days</button>
+  <div id="tracker-upcoming" style="display:none;margin-top:10px;"></div>
   <p class="help" style="margin-top:16px;font-size:11px;">Updates automatically. Position is approximate and depends on live data availability.</p>
 </div>
 
@@ -4150,6 +4152,52 @@ async function toggleLegStops(key, legStart, legEnd){
     trackerLegStopsCache[key] = { error: 'Could not reach the tracker — check your connection.' };
   }
   renderLegStopsBox(key);
+}
+
+// The live tracker only ever shows today's duty — this is a lightweight,
+// non-live preview of the same person's upcoming week, fetched on demand
+// (not part of the 20s poll) since the underlying rota barely changes.
+async function toggleTrackerUpcoming(){
+  const box = document.getElementById('tracker-upcoming');
+  const btn = document.getElementById('tracker-upcoming-btn');
+  if(!box) return;
+  if(box.style.display !== 'none'){
+    box.style.display = 'none';
+    if(btn) btn.textContent = '📅 Show next 7 days';
+    return;
+  }
+  box.style.display = 'block';
+  if(btn) btn.textContent = '📅 Hide next 7 days';
+  box.textContent = 'Loading…';
+  try{
+    const res = await fetch(WORKER_URL + '/tracker-upcoming.json?token=' + encodeURIComponent(getTrackerTokenFromURL()) + '&days=7');
+    const data = await res.json();
+    if(!res.ok || data.error || !Array.isArray(data.days)){
+      box.textContent = data.error || 'Could not load upcoming shifts.';
+      return;
+    }
+    renderTrackerUpcoming(data.days);
+  }catch(e){
+    box.textContent = 'Could not reach the tracker — check your connection.';
+  }
+}
+
+function renderTrackerUpcoming(days){
+  const box = document.getElementById('tracker-upcoming');
+  if(!box) return;
+  box.innerHTML = days.map(d => {
+    const dateLabel = new Date(d.date + 'T00:00:00').toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
+    let line;
+    if(d.isHoliday){
+      line = 'Holiday';
+    } else if(d.shifts.length){
+      line = d.shifts.map(s => s.name + (s.allDay ? '' : ' (' + s.start + '–' + s.end + ')')).join(' + ');
+    } else {
+      line = 'Rest day';
+    }
+    return '<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--border);">'
+      + '<span>' + escapeHtml(dateLabel) + '</span><span>' + escapeHtml(line) + '</span></div>';
+  }).join('');
 }
 
 function copyShareLink(){
