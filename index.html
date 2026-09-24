@@ -318,6 +318,7 @@
         </div>
         <div id="calendar-income" style="margin-bottom:14px;"></div>
         <div class="leg-summary" id="day-detail-panel" style="display:none;margin-bottom:14px;"></div>
+        <div class="leg-summary" id="upcoming-days-panel" style="display:none;margin-bottom:14px;"></div>
         <div id="calendar-list"></div>
         <div id="calendar-grid"></div>
       </section>
@@ -1603,12 +1604,55 @@ function showDayDetail(dateStr){
   const otBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="toggleOvertime(\'' + dateStr + '\')">'
     + (hasOt ? 'Cancel overtime request' : '💪 Request overtime this day') + '</button>';
   const swapBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="startSwapFromDay(\'' + dateStr + '\')">⇄ Swap this shift</button>';
+  const upcomingBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="showUpcomingDays(\'' + dateStr + '\')">📅 Show next 7 days</button>';
   panel.innerHTML = buildDayDetailHTML(dateStr, shifts, shiftId, 'My — ')
     + (hasOt ? '<p class="help" style="margin:8px 0 0;color:var(--amber);">Overtime requested for this day.</p>' : '')
-    + revertBtn + swapBtn + otBtn +
+    + revertBtn + swapBtn + otBtn + upcomingBtn +
     '<button class="btn secondary full" style="margin-top:10px;" onclick="closeDayDetail()">Close</button>';
   panel.style.display = 'block';
   panel.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+// Compact 7-day-forward preview from a clicked day — reuses the same
+// per-day shift resolution as the calendar's own list view, one row per day,
+// each clickable to jump into that day's own full detail panel.
+function buildUpcomingDaysHTML(startDateStr){
+  const start = new Date(startDateStr + 'T00:00:00');
+  const startLabel = start.toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long'});
+  let html = '<p style="margin:0 0 8px;font-weight:600;color:var(--text);">Next 7 days from ' + startLabel + '</p>';
+  const cursor = new Date(start);
+  for(let i = 0; i < 7; i++){
+    const key = dateKeyLocal(cursor);
+    const shiftId = effectiveShift(key);
+    const shifts = resolveDayShifts(shiftId, shiftTypes);
+    const dateLabel = cursor.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
+    let line;
+    if(shiftId === '__holiday__'){
+      line = '<span class="cal-shift-name">Holiday</span>';
+    } else if(shifts.length){
+      line = '<span class="cal-shift-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftTimeLabel(shifts));
+    } else {
+      line = '<span class="cal-shift-name">Rest day</span>';
+    }
+    if(i > 0) html += '<hr style="border:none;border-top:1px solid var(--border);margin:8px 0;">';
+    html += '<p class="help" style="margin:0;cursor:pointer;" onclick="closeUpcomingDays();showDayDetail(\'' + key + '\')"><strong style="color:var(--text);">' + dateLabel + '</strong> — ' + line + '</p>';
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return html;
+}
+
+function showUpcomingDays(dateStr){
+  const panel = document.getElementById('upcoming-days-panel');
+  if(!panel) return;
+  panel.innerHTML = buildUpcomingDaysHTML(dateStr)
+    + '<button class="btn secondary full" style="margin-top:10px;" onclick="closeUpcomingDays()">Close</button>';
+  panel.style.display = 'block';
+  panel.scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+function closeUpcomingDays(){
+  const panel = document.getElementById('upcoming-days-panel');
+  if(panel) panel.style.display = 'none';
 }
 
 // Jump from a day's detail panel straight into the normal "Swap a shift" flow,
@@ -4297,6 +4341,8 @@ function renderCalendarTab(){
   gridEl.style.display = viewMode === 'grid' ? '' : 'none';
   const detailPanel = document.getElementById('day-detail-panel');
   if(detailPanel) detailPanel.style.display = 'none';
+  const upcomingPanel = document.getElementById('upcoming-days-panel');
+  if(upcomingPanel) upcomingPanel.style.display = 'none';
   listEl.innerHTML = '';
   gridEl.innerHTML = '';
   gridEl.className = viewMode === 'grid' ? 'grid' : '';
