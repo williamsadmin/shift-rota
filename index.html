@@ -3956,12 +3956,13 @@ async function loadTrackerShareLink(){
   const box = document.getElementById('tracker-link-box');
   const statusEl = document.getElementById('tracker-link-status');
   if(!box) return;
-  // A username makes for a readable link (rota.example.com/ryantracker,
-  // resolved by the Worker straight from profiles.username) — 404.html
-  // forwards the plain path back into ?track= for it to pick up. Without one
-  // set, fall back to the original random-token link.
+  // A username makes for a readable link (rota.example.com/theryantracker,
+  // matching the tracker page's own "The Ryan Tracker" title) — resolved by
+  // the Worker straight from profiles.username, with 404.html forwarding the
+  // plain path back into ?track= for it to pick up. Without a username set,
+  // fall back to the original random-token link.
   if(myUsername){
-    box.value = location.origin + '/' + myUsername.toLowerCase() + 'tracker';
+    box.value = location.origin + '/the' + myUsername.toLowerCase() + 'tracker';
     return;
   }
   let { data, error } = await sb.from('tracker_shares').select('share_token').eq('user_id', currentUser.id).maybeSingle();
