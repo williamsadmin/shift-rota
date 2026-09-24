@@ -1,6 +1,6 @@
 // Shift Rota service worker — makes the app installable and works offline for
 // the app shell. Supabase / CDN requests are left to the network.
-const CACHE = 'shift-rota-v5';
+const CACHE = 'shift-rota-v6';
 const SHELL = [
   './',
   './index.html',
@@ -33,11 +33,17 @@ self.addEventListener('fetch', (e) => {
 
   if (req.mode === 'navigate') {
     // Network-first for the page so updates land immediately; fall back to cache offline.
+    // Only a genuinely successful response updates the offline fallback —
+    // a path-based tracker share link (e.g. /theryantracker) that doesn't
+    // match a real file resolves as an HTTP 404 (GitHub Pages serves 404.html
+    // for it), which must never overwrite the cached real app shell.
     e.respondWith(
       fetch(req)
         .then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put('./index.html', copy));
+          if(res.ok){
+            const copy = res.clone();
+            caches.open(CACHE).then((c) => c.put('./index.html', copy));
+          }
           return res;
         })
         .catch(() => caches.match('./index.html'))

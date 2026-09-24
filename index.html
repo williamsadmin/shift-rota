@@ -1067,6 +1067,7 @@ let profileCache = {}; // id -> profile, for display
 let allProfiles = []; // every other user's profile, for the People list
 let pinnedIds = new Set(); // ids of users I've starred
 let myCompany = null, myLocation = null;             // the current user's approved workplace
+let myUsername = ''; // the current user's own username, e.g. for building their tracker link
 let myPendingCompany = null, myPendingLocation = null; // their outstanding join request
 let categoryCompanyMap = {}; // shift-template category -> [companies allowed to see it]
 let myBlockAccess = {};      // category -> 'pending' | 'approved', this user's own extra-block requests
@@ -2863,7 +2864,7 @@ async function loadAccountData(){
   accountType = (profileRes.data && profileRes.data.account_type) || 'bus';
   document.getElementById('account-type-select').value = accountType;
   applyAccountType();
-  let myUsername = (profileRes.data && profileRes.data.username) || '';
+  myUsername = (profileRes.data && profileRes.data.username) || '';
   // Self-heal: if a username was chosen at signup (stored in auth metadata) but the
   // profile row doesn't have it yet, write it now.
   if(!myUsername){
@@ -3952,15 +3953,23 @@ function copyTextFromInput(inputEl, statusEl){
 }
 
 async function loadTrackerShareLink(){
+  const box = document.getElementById('tracker-link-box');
+  const statusEl = document.getElementById('tracker-link-status');
+  if(!box) return;
+  // A username makes for a readable link (rota.example.com/ryantracker,
+  // resolved by the Worker straight from profiles.username) — 404.html
+  // forwards the plain path back into ?track= for it to pick up. Without one
+  // set, fall back to the original random-token link.
+  if(myUsername){
+    box.value = location.origin + '/' + myUsername.toLowerCase() + 'tracker';
+    return;
+  }
   let { data, error } = await sb.from('tracker_shares').select('share_token').eq('user_id', currentUser.id).maybeSingle();
   if(!error && !data){
     const insertRes = await sb.from('tracker_shares').insert({ user_id: currentUser.id }).select('share_token').single();
     data = insertRes.data;
     error = insertRes.error;
   }
-  const box = document.getElementById('tracker-link-box');
-  const statusEl = document.getElementById('tracker-link-status');
-  if(!box) return;
   if(data){
     box.value = location.origin + location.pathname + '?track=' + data.share_token;
   } else if(error && statusEl && /relation|tracker_shares|does not exist/i.test(error.message || '')){
