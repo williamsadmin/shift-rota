@@ -180,12 +180,29 @@
     <form id="auth-form" autocomplete="on" onsubmit="submitAuth(event); return false;">
       <div class="row"><div><label>Email</label><input type="email" id="auth-email" name="email" autocomplete="username"></div></div>
       <div class="row" id="auth-username-row" style="display:none;"><div><label>Username</label><input type="text" id="auth-username" name="nickname" autocomplete="nickname" placeholder="e.g. chicken"></div></div>
-      <div class="row"><div><label>Password</label><input type="password" id="auth-password" name="password" autocomplete="current-password"></div></div>
+      <div class="row" id="auth-password-row"><div><label>Password</label><input type="password" id="auth-password" name="password" autocomplete="current-password"></div></div>
+      <p class="help" id="forgot-password-link" style="margin:-6px 0 10px;text-align:right;"><a onclick="setAuthMode('reset')" style="color:var(--amber);cursor:pointer;text-decoration:underline;">Forgot password?</a></p>
       <button class="btn full" id="auth-submit-btn" type="submit">Log in</button>
       <div class="status" id="auth-status"></div>
       <div class="toggle-row" id="auth-toggle">
         Don't have an account? <a onclick="toggleAuthMode()">Sign up</a>
       </div>
+    </form>
+  </section>
+</div>
+
+<!-- Landing screen for a password-reset email link — shown when Supabase
+     fires a PASSWORD_RECOVERY auth event after the link's tokens are parsed. -->
+<div id="reset-password-screen" style="display:none;max-width:380px;margin:calc(60px + env(safe-area-inset-top)) auto 0;padding:0 16px;">
+  <p class="eyebrow">Shift Rota</p>
+  <h1>Set a new password</h1>
+  <p class="sub" style="margin-bottom:16px;">Choose a new password for your account.</p>
+  <section>
+    <form id="reset-password-form" autocomplete="on" onsubmit="submitNewPassword(event); return false;">
+      <div class="row"><div><label>New password</label><input type="password" id="new-password-input" autocomplete="new-password"></div></div>
+      <div class="row"><div><label>Confirm new password</label><input type="password" id="new-password-confirm" autocomplete="new-password"></div></div>
+      <button class="btn full" type="submit">Set new password</button>
+      <div class="status" id="reset-password-status"></div>
     </form>
   </section>
 </div>
@@ -1028,6 +1045,16 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
 const SUPABASE_URL = 'https://ewmrruqpkvifhakqxaip.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_jHVT3it7bhuvvvxSEnjpTQ_9f8vsned';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// Registered immediately so it's in place before the client's own startup
+// parses a password-reset email link's tokens out of the URL and fires this.
+sb.auth.onAuthStateChange((event) => {
+  if(event === 'PASSWORD_RECOVERY'){
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app-screen').style.display = 'none';
+    document.getElementById('reset-password-screen').style.display = 'block';
+  }
+});
 
 if(typeof pdfjsLib !== 'undefined'){
   pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -2518,24 +2545,61 @@ function renderRecentColors(){
 }
 
 // ---------- AUTH ----------
-function toggleAuthMode(){
-  isSignup = !isSignup;
-  document.getElementById('auth-title').textContent = isSignup ? 'Sign up' : 'Log in';
-  document.getElementById('auth-submit-btn').textContent = isSignup ? 'Sign up' : 'Log in';
-  document.getElementById('auth-username-row').style.display = isSignup ? 'flex' : 'none';
-  document.getElementById('auth-password').autocomplete = isSignup ? 'new-password' : 'current-password';
-  document.getElementById('auth-toggle').innerHTML = isSignup
-    ? 'Already have an account? <a onclick="toggleAuthMode()">Log in</a>'
-    : "Don't have an account? <a onclick=\"toggleAuthMode()\">Sign up</a>";
+let authMode = 'login'; // 'login' | 'signup' | 'reset'
+
+function setAuthMode(mode){
+  authMode = mode;
+  isSignup = (mode === 'signup');
+  document.getElementById('auth-username-row').style.display = mode === 'signup' ? 'flex' : 'none';
+  document.getElementById('auth-password-row').style.display = mode === 'reset' ? 'none' : 'flex';
+  document.getElementById('forgot-password-link').style.display = mode === 'login' ? 'block' : 'none';
+  document.getElementById('auth-password').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+  const title = document.getElementById('auth-title'), submitBtn = document.getElementById('auth-submit-btn'), toggle = document.getElementById('auth-toggle');
+  if(mode === 'login'){
+    title.textContent = 'Log in';
+    submitBtn.textContent = 'Log in';
+    toggle.innerHTML = "Don't have an account? <a onclick=\"setAuthMode('signup')\">Sign up</a>";
+  } else if(mode === 'signup'){
+    title.textContent = 'Sign up';
+    submitBtn.textContent = 'Sign up';
+    toggle.innerHTML = "Already have an account? <a onclick=\"setAuthMode('login')\">Log in</a>";
+  } else if(mode === 'reset'){
+    title.textContent = 'Reset password';
+    submitBtn.textContent = 'Send reset link';
+    toggle.innerHTML = "<a onclick=\"setAuthMode('login')\">Back to log in</a>";
+  }
   document.getElementById('auth-status').textContent = '';
+}
+
+function toggleAuthMode(){
+  setAuthMode(isSignup ? 'login' : 'signup');
 }
 
 async function submitAuth(event){
   if(event) event.preventDefault();
   const email = document.getElementById('auth-email').value.trim();
-  const password = document.getElementById('auth-password').value;
   const statusEl = document.getElementById('auth-status');
-  if(!email || !password){
+  if(!email){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Enter your email.';
+    return;
+  }
+  if(authMode === 'reset'){
+    statusEl.style.color = 'var(--text-dim)';
+    statusEl.textContent = 'Sending reset link…';
+    try{
+      const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname });
+      if(error) throw error;
+      statusEl.style.color = 'var(--teal)';
+      statusEl.textContent = 'Check your email for a link to reset your password.';
+    }catch(e){
+      statusEl.style.color = 'var(--danger)';
+      statusEl.textContent = e.message || 'Something went wrong.';
+    }
+    return;
+  }
+  const password = document.getElementById('auth-password').value;
+  if(!password){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = 'Enter both an email and a password.';
     return;
@@ -2586,12 +2650,47 @@ async function logout(){
 async function onLoggedIn(user){
   currentUser = user;
   document.getElementById('auth-screen').style.display = 'none';
+  document.getElementById('reset-password-screen').style.display = 'none';
   document.getElementById('app-screen').style.display = 'block';
   document.getElementById('user-email').textContent = user.email;
   await loadAccountData();
 }
 
+async function submitNewPassword(event){
+  if(event) event.preventDefault();
+  const pw = document.getElementById('new-password-input').value;
+  const pw2 = document.getElementById('new-password-confirm').value;
+  const statusEl = document.getElementById('reset-password-status');
+  if(!pw || pw.length < 6){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = 'Password must be at least 6 characters.';
+    return;
+  }
+  if(pw !== pw2){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = "Passwords don't match.";
+    return;
+  }
+  statusEl.style.color = 'var(--text-dim)';
+  statusEl.textContent = 'Saving…';
+  try{
+    const { data, error } = await sb.auth.updateUser({ password: pw });
+    if(error) throw error;
+    // Drop the recovery tokens from the URL so a refresh doesn't re-trigger this screen.
+    history.replaceState(null, '', location.pathname);
+    await onLoggedIn(data.user);
+  }catch(e){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = e.message || 'Something went wrong.';
+  }
+}
+
 async function checkExistingSession(){
+  // A password-recovery link's session also counts as "existing" to
+  // getSession() — if the PASSWORD_RECOVERY listener already caught it and is
+  // showing the reset-password screen, leave it alone rather than skipping
+  // straight into the logged-in app.
+  if(document.getElementById('reset-password-screen').style.display === 'block') return;
   const { data } = await sb.auth.getSession();
   if(data && data.session && data.session.user){
     await onLoggedIn(data.session.user);
