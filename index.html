@@ -2854,6 +2854,11 @@ function applyAccountType(){
     const el = document.getElementById(id);
     if(el) el.style.display = edu ? 'none' : '';
   });
+  // Ratings (shift + bus) is PSV-driver-specific — hide the whole tab (not
+  // just the bus-rating section within it) for non-bus accounts, wherever
+  // it currently sits (top bar or the ☰ menu).
+  const ratingsTabBtn = document.querySelector('.tab-btn[data-tab="ratings"]');
+  if(ratingsTabBtn) ratingsTabBtn.style.display = edu ? 'none' : '';
 }
 
 async function saveAccountType(){
