@@ -571,6 +571,12 @@
         <p class="sec-title">Rota templates</p>
         <p class="help" style="margin-top:0;">Apply a full pre-built rota to your account — adds any required shifts to your collection and loads the complete pattern.</p>
         <div id="rota-templates-list"></div>
+        <div id="rtpl-view-box" style="display:none;margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--surface-alt);">
+          <p class="help" style="margin-top:0;font-weight:600;color:var(--text);" id="rtpl-view-name"></p>
+          <p class="help" style="margin:0 0 8px;">Pattern only — pick a start date under "Apply" to see it on real calendar dates.</p>
+          <div id="rtpl-view-grid" class="grid"></div>
+          <button class="btn secondary full" style="margin-top:10px;" onclick="closeViewRotaTemplate()">Close</button>
+        </div>
         <div id="rtpl-apply-box" style="display:none;margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--surface-alt);">
           <p class="help" style="margin-top:0;font-weight:600;color:var(--text);" id="rtpl-apply-name"></p>
           <div class="row">
@@ -580,9 +586,11 @@
             </div>
             <div style="max-width:180px;">
               <label>That date is in…</label>
-              <select id="rtpl-apply-anchor-week"></select>
+              <select id="rtpl-apply-anchor-week" onchange="onRtplApplyAnchorChange()"></select>
             </div>
           </div>
+          <p class="help" style="margin:0 0 8px;">Tap a day below to use it as the start date instead.</p>
+          <div id="rtpl-apply-preview-grid" class="grid"></div>
           <button class="btn full" id="rtpl-apply-schedule-btn" style="margin-top:8px;" onclick="confirmApplyRotaTemplate('schedule')">Start this rota from that date (keep my current rota before)</button>
           <button class="btn secondary full" style="margin-top:8px;" onclick="confirmApplyRotaTemplate('replace')">Replace my whole rota now instead</button>
           <button class="btn secondary full" style="margin-top:8px;" onclick="cancelApplyRotaTemplate()">Cancel</button>
@@ -5502,12 +5510,88 @@ async function deleteRotaTemplate(id){
 // "scheduled rota versions" feature) or replace their whole rota immediately.
 let pendingRotaTemplateApply = null;
 
+// Renders a rota template's pattern as a read-only grid, reusing the same
+// week-marker/day-label/day-cell-readonly look as the Calendar tab's own
+// grid view. With no rotaStartForPreview it's an abstract "Week N" view (for
+// the standalone "View" button — just the pattern, no dates yet); with one,
+// it shows real calendar dates instead, and each day becomes clickable so
+// tapping it anchors the template to start there (see setRtplApplyAnchorFromPreview).
+function renderRtplPreviewGrid(containerId, pattern, weeksN, wsd, rotaStartForPreview){
+  const el = document.getElementById(containerId);
+  if(!el) return;
+  el.innerHTML = '';
+  const labels = DAY_LABELS.slice(wsd).concat(DAY_LABELS.slice(0, wsd));
+  const startDate = rotaStartForPreview ? new Date(rotaStartForPreview + 'T00:00:00') : null;
+  for(let w = 0; w < weeksN; w++){
+    const marker = document.createElement('div');
+    marker.className = 'week-marker';
+    if(startDate){
+      const weekStart = new Date(startDate); weekStart.setDate(weekStart.getDate() + w*7);
+      marker.textContent = weekStart.toLocaleDateString(undefined, {day:'numeric', month:'short'});
+    } else {
+      marker.textContent = 'Week ' + (w+1);
+    }
+    el.appendChild(marker);
+    labels.forEach(d=>{
+      const lbl = document.createElement('div');
+      lbl.className = 'day-label';
+      lbl.textContent = d;
+      el.appendChild(lbl);
+    });
+    for(let d = 0; d < 7; d++){
+      const idx = w*7 + d;
+      const value = pattern[idx] || '';
+      const shifts = splitShiftIds(value).map(id => templates.find(t => t.id === id)).filter(Boolean);
+      const cell = document.createElement('div');
+      cell.className = 'day-cell-readonly';
+      let dateObj = null;
+      if(startDate){
+        dateObj = new Date(startDate); dateObj.setDate(dateObj.getDate() + idx);
+        const weekNum = w + 1;
+        cell.style.cursor = 'pointer';
+        cell.title = 'Use ' + dateObj.toLocaleDateString() + ' as the start date';
+        cell.onclick = ()=>setRtplApplyAnchorFromPreview(dateKeyLocal(dateObj), weekNum);
+      }
+      let inner = startDate ? String(dateObj.getDate()) : '';
+      if(value === '__holiday__'){
+        inner += '<span class="cal-grid-name">Holiday</span>';
+        cell.style.background = 'var(--teal)'; cell.style.color = '#203143';
+      } else if(shifts.length){
+        cell.style.background = multiShiftBackground(shifts);
+        cell.style.color = '#203143';
+        inner += '<span class="cal-grid-name">' + escapeHtml(shifts.map(s => s.name).join(' + ')) + '</span>';
+      } else {
+        inner += '<span class="cal-grid-name">RD</span>';
+      }
+      cell.innerHTML = inner;
+      el.appendChild(cell);
+    }
+  }
+}
+
+function viewRotaTemplate(rtpl){
+  const ld = rtpl.legs_data || {};
+  document.getElementById('rtpl-view-name').textContent = 'Viewing "' + rtpl.name + '"';
+  renderRtplPreviewGrid('rtpl-view-grid', ld.pattern || [], ld.weeks || 5, ld.week_start_day || 0, null);
+  const box = document.getElementById('rtpl-view-box');
+  box.style.display = 'block';
+  box.scrollIntoView({behavior:'smooth', block:'start'});
+}
+
+function closeViewRotaTemplate(){
+  document.getElementById('rtpl-view-box').style.display = 'none';
+}
+
 function startApplyRotaTemplate(rtpl){
   pendingRotaTemplateApply = rtpl;
   document.getElementById('rtpl-apply-name').textContent = 'Applying "' + rtpl.name + '"';
-  document.getElementById('rtpl-apply-anchor-date').value = '';
+  // Defaults to today so a real-dated preview is visible right away, rather
+  // than an empty date field — tapping any day in it (or changing the
+  // fields) moves the anchor from there.
+  document.getElementById('rtpl-apply-anchor-date').value = dateKeyLocal(new Date());
   document.getElementById('rtpl-apply-status').textContent = '';
   populateRtplApplyAnchorWeekSelect();
+  onRtplApplyAnchorChange();
   const box = document.getElementById('rtpl-apply-box');
   box.style.display = 'block';
   box.scrollIntoView({behavior:'smooth', block:'start'});
@@ -5528,7 +5612,22 @@ function populateRtplApplyAnchorWeekSelect(){
   sel.value = String(Math.min(prev, w));
 }
 
-function onRtplApplyAnchorChange(){}
+function onRtplApplyAnchorChange(){
+  if(!pendingRotaTemplateApply) return;
+  const ld = pendingRotaTemplateApply.legs_data || {};
+  const weeksN = ld.weeks || 5;
+  const wsd = ld.week_start_day || 0;
+  const anchorDate = document.getElementById('rtpl-apply-anchor-date').value;
+  const anchorWeek = parseInt(document.getElementById('rtpl-apply-anchor-week').value, 10) || 1;
+  const rotaStartForPreview = anchorDate ? computeRotaStartFromAnchor(anchorDate, anchorWeek, wsd) : null;
+  renderRtplPreviewGrid('rtpl-apply-preview-grid', ld.pattern || [], weeksN, wsd, rotaStartForPreview);
+}
+
+function setRtplApplyAnchorFromPreview(dateKey, weekNum){
+  document.getElementById('rtpl-apply-anchor-date').value = dateKey;
+  document.getElementById('rtpl-apply-anchor-week').value = String(weekNum);
+  onRtplApplyAnchorChange();
+}
 
 async function confirmApplyRotaTemplate(mode){
   const rtpl = pendingRotaTemplateApply;
@@ -5612,9 +5711,14 @@ function renderRotaTemplateList(){
       + ' <span style="color:var(--text-dim);font-size:12px;">· ' + weeks + ' week' + (weeks!==1?'s':'') + ', week starts ' + wsd + '</span>'
       + (rtpl.description ? '<br><span style="font-size:12px;color:var(--text-dim);">' + escapeHtml(rtpl.description) + '</span>' : '') + '</span>';
     const btnGroup = document.createElement('span');
+    const viewBtn = document.createElement('button');
+    viewBtn.textContent = 'View';
+    viewBtn.onclick = ()=>viewRotaTemplate(rtpl);
+    btnGroup.appendChild(viewBtn);
     const applyBtn = document.createElement('button');
     applyBtn.textContent = accountType === 'education' ? 'Apply to my timetable' : 'Apply to my rota';
     applyBtn.style.color = 'var(--teal)';
+    applyBtn.style.marginLeft = '10px';
     applyBtn.onclick = ()=>startApplyRotaTemplate(rtpl);
     btnGroup.appendChild(applyBtn);
     if(isAdmin){
