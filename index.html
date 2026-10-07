@@ -245,6 +245,14 @@
     <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
   </div>
 
+  <!-- Shown whenever an admin is "logged in as" another user — tab-agnostic
+       for the same reason as #rtpl-view-box below, since it needs to stay
+       visible no matter which tab is active. -->
+  <div id="impersonation-banner" style="display:none;max-width:600px;margin:10px auto;padding:10px 14px;border-radius:7px;background:var(--amber);color:#1a1a1a;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+    <span style="font-size:13px;font-weight:600;">👤 Viewing as <span id="impersonation-banner-name"></span> — changes save to their account</span>
+    <button class="btn secondary" style="padding:6px 12px;font-size:12px;background:#1a1a1a;color:#fff;border:none;" onclick="exitImpersonation()">Exit</button>
+  </div>
+
   <!-- Lives outside the tab-panel system (not inside .wrap) since it's
        opened both from the Templates tab (viewing your own templates) and
        the Admin tab (an admin viewing a template while setting up a user's
@@ -829,7 +837,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="status" id="top-tabs-status"></div>
       </section>
 
-      <section>
+      <section id="account-password-section">
         <p class="sec-title">Change password</p>
         <p class="help" style="margin-top:0;">Set a new password for logging in.</p>
         <div class="row">
@@ -1080,6 +1088,14 @@ function getDayLabels(){
   return DAY_LABELS.slice(weekStartDay).concat(DAY_LABELS.slice(0, weekStartDay));
 }
 let currentUser = null;
+// Admin "log in as user" — when set, every "my data" read/write (shifts, rota,
+// overrides, ratings, pins, pay, profile fields) targets this user instead of
+// currentUser, by going through effectiveUserId() rather than currentUser.id
+// directly. The real auth session (and so the password-change flow) always
+// stays the admin's own — only data scoping changes.
+let impersonating = null; // { id, email, username } of the user being viewed/edited as, or null
+let realIsAdmin = false;  // the actual logged-in user's own admin flag, independent of impersonation
+function effectiveUserId(){ return impersonating ? impersonating.id : (currentUser && currentUser.id); }
 let shiftTypes = [];     // personal shift types
 let templates = [];      // admin shift templates (is_template = true, category != '__rota__')
 let rotaTemplates = [];  // admin rota templates (is_template = true, category == '__rota__')
@@ -1137,18 +1153,18 @@ async function loadPeopleTab(){
     // company/location columns not added yet — fall back so People still works
     profRes = await sb.from('profiles').select('id,email,display_name,username').order('username');
   }
-  const pinRes = await sb.from('pinned_users').select('pinned_id').eq('user_id', currentUser.id);
+  const pinRes = await sb.from('pinned_users').select('pinned_id').eq('user_id', effectiveUserId());
   if(profRes.error){
     if(statusEl){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Could not load people: ' + profRes.error.message; }
     return;
   }
   const all = profRes.data || [];
-  const me = all.find(p => p.id === currentUser.id) || {};
+  const me = all.find(p => p.id === effectiveUserId()) || {};
   myCompany = me.company || null;
   myLocation = me.location || null;
   myPendingCompany = me.pending_company || null;
   myPendingLocation = me.pending_location || null;
-  allProfiles = all.filter(p => p.id !== currentUser.id);
+  allProfiles = all.filter(p => p.id !== effectiveUserId());
   allProfiles.forEach(p => profileCache[p.id] = p);
   pinnedIds = new Set(((pinRes && pinRes.data) || []).map(r => r.pinned_id));
   if(statusEl) statusEl.textContent = '';
@@ -1195,7 +1211,7 @@ async function requestWorkplace(){
   const payload = isAdmin
     ? { company, location: location || null, pending_company: null, pending_location: null }
     : { pending_company: company, pending_location: location || null };
-  const { error } = await sb.from('profiles').update(payload).eq('id', currentUser.id);
+  const { error } = await sb.from('profiles').update(payload).eq('id', effectiveUserId());
   if(error){
     statusEl.style.color='var(--danger)';
     statusEl.textContent = /column|pending|company|location/i.test(error.message)
@@ -1207,7 +1223,7 @@ async function requestWorkplace(){
 }
 
 async function cancelWorkplaceRequest(){
-  await sb.from('profiles').update({ pending_company: null, pending_location: null }).eq('id', currentUser.id);
+  await sb.from('profiles').update({ pending_company: null, pending_location: null }).eq('id', effectiveUserId());
   await loadPeopleTab();
 }
 
@@ -1356,10 +1372,10 @@ function personRow(p, opts){
 async function togglePin(userId){
   if(pinnedIds.has(userId)){
     pinnedIds.delete(userId);
-    await sb.from('pinned_users').delete().eq('user_id', currentUser.id).eq('pinned_id', userId);
+    await sb.from('pinned_users').delete().eq('user_id', effectiveUserId()).eq('pinned_id', userId);
   } else {
     pinnedIds.add(userId);
-    await sb.from('pinned_users').insert({ user_id: currentUser.id, pinned_id: userId });
+    await sb.from('pinned_users').insert({ user_id: effectiveUserId(), pinned_id: userId });
   }
   renderPeopleList();
 }
@@ -1376,7 +1392,7 @@ async function saveUsername(){
   document.getElementById('username-input').value = username;
   statusEl.style.color = 'var(--text-dim)';
   statusEl.textContent = 'Saving…';
-  const { error } = await sb.from('profiles').update({ username }).eq('id', currentUser.id);
+  const { error } = await sb.from('profiles').update({ username }).eq('id', effectiveUserId());
   if(error){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = error.message.includes('duplicate') ? 'That username is already taken.' : error.message;
@@ -1388,6 +1404,11 @@ async function saveUsername(){
 
 async function changePassword(){
   const statusEl = document.getElementById('password-status');
+  if(impersonating){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = "Can't change a password while viewing as another user — this would change YOUR password, not theirs. Exit first.";
+    return;
+  }
   const pw = document.getElementById('new-password-input').value;
   const pwConfirm = document.getElementById('new-password-confirm').value;
   if(!pw || pw.length < 6){
@@ -1740,7 +1761,7 @@ async function ensureOvertimeShift(){
   const legacyId = await renameLegacyOvertimeShift();
   if(legacyId) return legacyId;
   const { data, error } = await sb.from('shift_types').insert({
-    owner_id: currentUser.id, is_template: false, name: OT_SHIFT_NAME,
+    owner_id: effectiveUserId(), is_template: false, name: OT_SHIFT_NAME,
     all_day: true, start_time: '', end_time: '', paid_hours: '', description: '',
     color: '#F2A93B', legs_data: null, allowed_days: null
   }).select().single();
@@ -1754,7 +1775,7 @@ async function ensureOvertimeShift(){
 async function migrateOvertimeRequests(){
   let rows;
   try{
-    const { data, error } = await sb.from('overtime_requests').select('request_date').eq('user_id', currentUser.id);
+    const { data, error } = await sb.from('overtime_requests').select('request_date').eq('user_id', effectiveUserId());
     if(error || !data || !data.length) return;
     rows = data;
   }catch(e){ return; }
@@ -1762,10 +1783,10 @@ async function migrateOvertimeRequests(){
   if(!otId) return;
   const overrideRows = rows
     .filter(r => !allOverrides.some(o => o.override_date === r.request_date))
-    .map(r => ({ user_id: currentUser.id, override_date: r.request_date, value: otId, source: 'overtime' }));
+    .map(r => ({ user_id: effectiveUserId(), override_date: r.request_date, value: otId, source: 'overtime' }));
   if(overrideRows.length) await sb.from('overrides').upsert(overrideRows, { onConflict: 'user_id,override_date' });
-  await sb.from('overtime_requests').delete().eq('user_id', currentUser.id);
-  const { data: ov } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
+  await sb.from('overtime_requests').delete().eq('user_id', effectiveUserId());
+  const { data: ov } = await sb.from('overrides').select('*').eq('user_id', effectiveUserId()).order('override_date');
   allOverrides = ov || [];
   holidays = allOverrides.filter(o => o.value === '__holiday__');
 }
@@ -1774,7 +1795,7 @@ async function toggleOvertime(dateStr){
   const existing = allOverrides.find(o => o.override_date === dateStr);
   let error;
   if(existing && existing.source === 'overtime'){
-    ({ error } = await sb.from('overrides').delete().eq('user_id', currentUser.id).eq('override_date', dateStr));
+    ({ error } = await sb.from('overrides').delete().eq('user_id', effectiveUserId()).eq('override_date', dateStr));
   } else {
     if(existing){
       const what = existing.value === '__holiday__' ? 'a booked holiday' : 'a changed shift';
@@ -1782,10 +1803,10 @@ async function toggleOvertime(dateStr){
     }
     const otId = await ensureOvertimeShift();
     if(!otId) return;
-    ({ error } = await sb.from('overrides').upsert([{ user_id: currentUser.id, override_date: dateStr, value: otId, source: 'overtime' }], { onConflict: 'user_id,override_date' }));
+    ({ error } = await sb.from('overrides').upsert([{ user_id: effectiveUserId(), override_date: dateStr, value: otId, source: 'overtime' }], { onConflict: 'user_id,override_date' }));
   }
   if(error){ alert(error.message); return; }
-  const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
+  const { data } = await sb.from('overrides').select('*').eq('user_id', effectiveUserId()).order('override_date');
   allOverrides = data || [];
   holidays = allOverrides.filter(o => o.value === '__holiday__');
   refreshOvertimeSet();
@@ -1834,7 +1855,7 @@ function renderOvertimeBanner(){
 }
 
 async function markOvertimeTold(dateStr){
-  const { error } = await sb.from('overrides').update({ notified_workplace: true }).eq('user_id', currentUser.id).eq('override_date', dateStr);
+  const { error } = await sb.from('overrides').update({ notified_workplace: true }).eq('user_id', effectiveUserId()).eq('override_date', dateStr);
   if(error){
     alert(/column|notified_workplace/i.test(error.message)
       ? 'Needs a one-off database update — run the notified_workplace column change from db-setup.sql.'
@@ -1850,9 +1871,9 @@ async function revertDayToOriginal(dateStr){
   const originalShifts = resolveDayShifts(originalId, shiftTypes);
   const originalLabel = originalId === '' ? 'a rest day' : (originalShifts.length ? multiShiftNameLabel(originalShifts) : 'its original shift');
   if(!confirm('Revert this day back to ' + originalLabel + '? This removes the change you made.')) return;
-  const { error } = await sb.from('overrides').delete().eq('user_id', currentUser.id).eq('override_date', dateStr);
+  const { error } = await sb.from('overrides').delete().eq('user_id', effectiveUserId()).eq('override_date', dateStr);
   if(error){ alert('Could not revert: ' + error.message); return; }
-  const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
+  const { data } = await sb.from('overrides').select('*').eq('user_id', effectiveUserId()).order('override_date');
   allOverrides = data || [];
   holidays = allOverrides.filter(o => o.value === '__holiday__');
   closeDayDetail();
@@ -2656,17 +2677,21 @@ async function submitAuth(event){
 async function logout(){
   await sb.auth.signOut();
   currentUser = null;
+  impersonating = null;
+  realIsAdmin = false;
   document.getElementById('app-screen').style.display = 'none';
   document.getElementById('auth-screen').style.display = 'block';
 }
 
 async function onLoggedIn(user){
   currentUser = user;
+  impersonating = null;
   document.getElementById('auth-screen').style.display = 'none';
   document.getElementById('reset-password-screen').style.display = 'none';
   document.getElementById('app-screen').style.display = 'block';
   document.getElementById('user-email').textContent = user.email;
   await loadAccountData();
+  renderImpersonationBanner();
 }
 
 async function submitNewPassword(event){
@@ -2779,7 +2804,7 @@ async function saveTopTabs(){
     return;
   }
   statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
-  const { error } = await sb.from('profiles').update({ top_tabs: picked }).eq('id', currentUser.id);
+  const { error } = await sb.from('profiles').update({ top_tabs: picked }).eq('id', effectiveUserId());
   if(error){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = /column|top_tabs/i.test(error.message)
@@ -2884,13 +2909,13 @@ async function saveAccountType(){
   // figures linger if the account switches back later without re-checking it.
   if(newType === 'education' && payRates.enabled){
     payRates.enabled = false;
-    await sb.from('pay_rates').upsert({ user_id: currentUser.id, ...payRates });
+    await sb.from('pay_rates').upsert({ user_id: effectiveUserId(), ...payRates });
     document.getElementById('pay-enabled').checked = false;
     const quickPayToggle = document.getElementById('quick-pay-toggle');
     if(quickPayToggle) quickPayToggle.checked = false;
     document.getElementById('pay-rates-box').style.display = 'none';
   }
-  const { error } = await sb.from('profiles').update(payload).eq('id', currentUser.id);
+  const { error } = await sb.from('profiles').update(payload).eq('id', effectiveUserId());
   if(error){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = /column|account_type/i.test(error.message)
@@ -2926,10 +2951,10 @@ function renderMyBlocksList(){
     cb.disabled = status === 'approved'; // an admin granted this — not self-revocable
     cb.onchange = async ()=>{
       if(cb.checked){
-        await sb.from('user_block_access').upsert({ user_id: currentUser.id, category: cat, status: 'pending' });
+        await sb.from('user_block_access').upsert({ user_id: effectiveUserId(), category: cat, status: 'pending' });
         myBlockAccess[cat] = 'pending';
       } else {
-        await sb.from('user_block_access').delete().eq('user_id', currentUser.id).eq('category', cat);
+        await sb.from('user_block_access').delete().eq('user_id', effectiveUserId()).eq('category', cat);
         delete myBlockAccess[cat];
       }
       renderMyBlocksList();
@@ -2943,20 +2968,20 @@ function renderMyBlocksList(){
 
 async function loadAccountData(){
   const [stRes, tplRes, rotaRes, ovRes, payRes, profileRes, catCoRes, blockAccessRes] = await Promise.all([
-    sb.from('shift_types').select('*').eq('owner_id', currentUser.id),
+    sb.from('shift_types').select('*').eq('owner_id', effectiveUserId()),
     sb.from('shift_types').select('*').eq('is_template', true),
-    sb.from('rota_settings').select('*').eq('user_id', currentUser.id).maybeSingle(),
-    sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date'),
-    sb.from('pay_rates').select('*').eq('user_id', currentUser.id).maybeSingle(),
-    sb.from('profiles').select('is_admin,username,top_tabs,account_type,company').eq('id', currentUser.id).maybeSingle(),
+    sb.from('rota_settings').select('*').eq('user_id', effectiveUserId()).maybeSingle(),
+    sb.from('overrides').select('*').eq('user_id', effectiveUserId()).order('override_date'),
+    sb.from('pay_rates').select('*').eq('user_id', effectiveUserId()).maybeSingle(),
+    sb.from('profiles').select('is_admin,username,top_tabs,account_type,company').eq('id', effectiveUserId()).maybeSingle(),
     sb.from('category_companies').select('*'),
-    sb.from('user_block_access').select('*').eq('user_id', currentUser.id)
+    sb.from('user_block_access').select('*').eq('user_id', effectiveUserId())
   ]);
   // account_type/company are newer columns — fall back gracefully until the
   // db-setup.sql migration for them has been run, rather than losing
   // is_admin/username/top_tabs for everyone in the meantime.
   if(profileRes.error && /column|account_type|company/i.test(profileRes.error.message || '')){
-    const retry = await sb.from('profiles').select('is_admin,username,top_tabs').eq('id', currentUser.id).maybeSingle();
+    const retry = await sb.from('profiles').select('is_admin,username,top_tabs').eq('id', effectiveUserId()).maybeSingle();
     profileRes.data = retry.data;
     profileRes.error = retry.error;
   }
@@ -2976,18 +3001,24 @@ async function loadAccountData(){
   holidays = allOverrides.filter(o => o.value === '__holiday__');
   await migrateOvertimeRequests();
   refreshOvertimeSet();
-  isAdmin = (profileRes.data && profileRes.data.is_admin) || false;
+  // While impersonating, keep the real admin's own admin status (so the Admin
+  // tab — and the way back out of impersonation — never disappears just
+  // because the user being viewed isn't an admin themselves).
+  isAdmin = impersonating ? realIsAdmin : ((profileRes.data && profileRes.data.is_admin) || false);
+  if(!impersonating) realIsAdmin = isAdmin;
   myCompany = (profileRes.data && profileRes.data.company) || myCompany;
   accountType = (profileRes.data && profileRes.data.account_type) || 'bus';
   document.getElementById('account-type-select').value = accountType;
   applyAccountType();
   myUsername = (profileRes.data && profileRes.data.username) || '';
   // Self-heal: if a username was chosen at signup (stored in auth metadata) but the
-  // profile row doesn't have it yet, write it now.
-  if(!myUsername){
+  // profile row doesn't have it yet, write it now. Only makes sense for the real
+  // logged-in account — never write the admin's own signup metadata onto an
+  // impersonated user's profile.
+  if(!myUsername && !impersonating){
     const metaUsername = (currentUser.user_metadata && currentUser.user_metadata.username) || '';
     if(metaUsername){
-      const { error: healErr } = await sb.from('profiles').update({ username: metaUsername }).eq('id', currentUser.id);
+      const { error: healErr } = await sb.from('profiles').update({ username: metaUsername }).eq('id', effectiveUserId());
       if(!healErr) myUsername = metaUsername;
     }
   }
@@ -3092,7 +3123,7 @@ async function addShiftType(){
   if(editingItem.st){
     result = await sb.from('shift_types').update(payload).eq('id', editingItem.st).select().single();
   } else {
-    result = await sb.from('shift_types').insert({ ...payload, owner_id: currentUser.id }).select().single();
+    result = await sb.from('shift_types').insert({ ...payload, owner_id: effectiveUserId() }).select().single();
   }
   const { data, error } = result;
 
@@ -3126,7 +3157,7 @@ async function removeShiftType(id){
 
 async function addTemplateToMine(tpl){
   const { data, error } = await sb.from('shift_types').insert({
-    owner_id: currentUser.id, is_template: false, name: tpl.name,
+    owner_id: effectiveUserId(), is_template: false, name: tpl.name,
     all_day: tpl.all_day, start_time: tpl.start_time, end_time: tpl.end_time,
     paid_hours: tpl.paid_hours, description: tpl.description, color: tpl.color,
     legs_data: tpl.legs_data, source_template_id: tpl.id, allowed_days: tpl.allowed_days
@@ -3679,7 +3710,7 @@ async function toggleQuickPay(){
   renderOriginalGrid();
   renderCalendarTab();
   const { error } = await sb.from('pay_rates').upsert({
-    user_id: currentUser.id,
+    user_id: effectiveUserId(),
     enabled: payRates.enabled,
     sun: payRates.sun, mon: payRates.mon, tue: payRates.tue, wed: payRates.wed,
     thu: payRates.thu, fri: payRates.fri, sat: payRates.sat
@@ -3701,7 +3732,7 @@ async function quickCreateShift(name, start, end){
   const hasTimes = !!(start && end);
   const color = IMPORT_PALETTE[shiftTypes.length % IMPORT_PALETTE.length];
   const { data, error } = await sb.from('shift_types').insert({
-    owner_id: currentUser.id, is_template: false, name,
+    owner_id: effectiveUserId(), is_template: false, name,
     all_day: !hasTimes, start_time: hasTimes ? start : '', end_time: hasTimes ? end : '',
     paid_hours: '', description: '', color, legs_data: null, allowed_days: null
   }).select().single();
@@ -4015,7 +4046,7 @@ async function bookHolidayFromOriginal(){
   const cursor = new Date(start);
   while(cursor <= end){
     const y = cursor.getFullYear(), m = String(cursor.getMonth()+1).padStart(2,'0'), d = String(cursor.getDate()).padStart(2,'0');
-    rows.push({ user_id: currentUser.id, override_date: y+'-'+m+'-'+d, value: '__holiday__', source: 'holiday' });
+    rows.push({ user_id: effectiveUserId(), override_date: y+'-'+m+'-'+d, value: '__holiday__', source: 'holiday' });
     cursor.setDate(cursor.getDate()+1);
   }
   statusEl.style.color = 'var(--text-dim)';
@@ -4030,7 +4061,7 @@ async function bookHolidayFromOriginal(){
   document.getElementById('orig-hol-end').value = '';
   statusEl.style.color = 'var(--teal)';
   statusEl.textContent = 'Booked ' + rows.length + ' day' + (rows.length===1?'':'s') + ' of holiday.';
-  const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
+  const { data } = await sb.from('overrides').select('*').eq('user_id', effectiveUserId()).order('override_date');
   allOverrides = data || [];
   holidays = allOverrides.filter(o => o.value === '__holiday__');
   renderHolidayList();
@@ -4048,9 +4079,9 @@ async function removeHoliday(id){
 const WORKER_URL = 'https://shift-rota.ryan-williams-26.workers.dev';
 
 async function loadShareLink(){
-  let { data } = await sb.from('calendar_shares').select('share_token').eq('user_id', currentUser.id).maybeSingle();
+  let { data } = await sb.from('calendar_shares').select('share_token').eq('user_id', effectiveUserId()).maybeSingle();
   if(!data){
-    const insertRes = await sb.from('calendar_shares').insert({ user_id: currentUser.id }).select('share_token').single();
+    const insertRes = await sb.from('calendar_shares').insert({ user_id: effectiveUserId() }).select('share_token').single();
     data = insertRes.data;
   }
   const box = document.getElementById('share-link-box');
@@ -4082,9 +4113,9 @@ async function loadTrackerShareLink(){
     box.value = location.origin + '/the' + myUsername.toLowerCase() + 'tracker';
     return;
   }
-  let { data, error } = await sb.from('tracker_shares').select('share_token').eq('user_id', currentUser.id).maybeSingle();
+  let { data, error } = await sb.from('tracker_shares').select('share_token').eq('user_id', effectiveUserId()).maybeSingle();
   if(!error && !data){
-    const insertRes = await sb.from('tracker_shares').insert({ user_id: currentUser.id }).select('share_token').single();
+    const insertRes = await sb.from('tracker_shares').insert({ user_id: effectiveUserId() }).select('share_token').single();
     data = insertRes.data;
     error = insertRes.error;
   }
@@ -4842,7 +4873,7 @@ async function finalizeSwap(choice){
   if(!pendingSwap) return;
   const statusEl = document.getElementById('swap-status');
   const tentative = choice === 'need_to';
-  const row = { user_id: currentUser.id, override_date: pendingSwap.date, value: pendingSwap.newValue, source: 'self_swap', tentative };
+  const row = { user_id: effectiveUserId(), override_date: pendingSwap.date, value: pendingSwap.newValue, source: 'self_swap', tentative };
   statusEl.style.color = 'var(--text-dim)';
   statusEl.textContent = 'Saving…';
   const { error } = await sb.from('overrides').upsert([row], { onConflict: 'user_id,override_date' });
@@ -4869,7 +4900,7 @@ async function finalizeSwap(choice){
   swapPickerRevealed = false;
   renderSwapShiftPicker();
   pendingSwap = null;
-  const { data } = await sb.from('overrides').select('*').eq('user_id', currentUser.id).order('override_date');
+  const { data } = await sb.from('overrides').select('*').eq('user_id', effectiveUserId()).order('override_date');
   allOverrides = data || [];
   holidays = allOverrides.filter(o => o.value === '__holiday__');
   renderHolidayList();
@@ -5024,7 +5055,7 @@ async function persistRota(statusEl, successMsg){
   statusEl.style.color = 'var(--text-dim)';
   statusEl.textContent = 'Saving…';
   const payload = {
-    user_id: currentUser.id,
+    user_id: effectiveUserId(),
     rota_start: baseRota.rota_start,
     weeks: baseRota.weeks,
     week_start_day: baseRota.week_start_day,
@@ -5041,7 +5072,7 @@ async function persistRota(statusEl, successMsg){
     return false;
   }
   const { error: payError } = await sb.from('pay_rates').upsert({
-    user_id: currentUser.id,
+    user_id: effectiveUserId(),
     enabled: payRates.enabled,
     sun: payRates.sun, mon: payRates.mon, tue: payRates.tue, wed: payRates.wed,
     thu: payRates.thu, fri: payRates.fri, sat: payRates.sat
@@ -5079,8 +5110,8 @@ let myBusRatings = [];
 
 async function loadRatings(){
   const [shiftRes, busRes] = await Promise.all([
-    sb.from('shift_ratings').select('*').eq('user_id', currentUser.id),
-    sb.from('bus_ratings').select('*').eq('user_id', currentUser.id)
+    sb.from('shift_ratings').select('*').eq('user_id', effectiveUserId()),
+    sb.from('bus_ratings').select('*').eq('user_id', effectiveUserId())
   ]);
   myShiftRatings = shiftRes.error ? [] : (shiftRes.data || []);
   myBusRatings = busRes.error ? [] : (busRes.data || []);
@@ -5138,7 +5169,7 @@ async function saveShiftRating(){
   if(!shiftRating){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Rate the shift (tap a star).'; return; }
   statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
   const { error } = await sb.from('shift_ratings').upsert([{
-    user_id: currentUser.id, rating_date: d, shift_name: shiftName, shift_rating: shiftRating
+    user_id: effectiveUserId(), rating_date: d, shift_name: shiftName, shift_rating: shiftRating
   }], { onConflict: 'user_id,rating_date' });
   if(error){
     statusEl.style.color = 'var(--danger)';
@@ -5154,7 +5185,7 @@ async function saveShiftRating(){
 
 async function deleteShiftRating(dateStr){
   if(!confirm('Delete this shift rating?')) return;
-  await sb.from('shift_ratings').delete().eq('user_id', currentUser.id).eq('rating_date', dateStr);
+  await sb.from('shift_ratings').delete().eq('user_id', effectiveUserId()).eq('rating_date', dateStr);
   await loadRatings();
   renderRatingsTab();
 }
@@ -5232,7 +5263,7 @@ async function saveBusRating(){
   if(!busRating){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Rate the bus (tap a star).'; return; }
   statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
   const { error } = await sb.from('bus_ratings').upsert([{
-    user_id: currentUser.id, rating_date: d, bus_number: busNumber, bus_rating: busRating
+    user_id: effectiveUserId(), rating_date: d, bus_number: busNumber, bus_rating: busRating
   }], { onConflict: 'user_id,rating_date,bus_number' });
   if(error){
     statusEl.style.color = 'var(--danger)';
@@ -5248,7 +5279,7 @@ async function saveBusRating(){
 
 async function deleteBusRating(dateStr, busNumber){
   if(!confirm('Delete this bus rating?')) return;
-  await sb.from('bus_ratings').delete().eq('user_id', currentUser.id).eq('rating_date', dateStr).eq('bus_number', busNumber);
+  await sb.from('bus_ratings').delete().eq('user_id', effectiveUserId()).eq('rating_date', dateStr).eq('bus_number', busNumber);
   await loadRatings();
   renderRatingsTab();
 }
@@ -5671,7 +5702,7 @@ async function confirmApplyRotaTemplate(mode){
     const src = templates.find(t => t.id === tplId);
     if(src){
       const { data } = await sb.from('shift_types').insert({
-        owner_id: currentUser.id, is_template: false, name: src.name,
+        owner_id: effectiveUserId(), is_template: false, name: src.name,
         all_day: src.all_day, start_time: src.start_time, end_time: src.end_time,
         paid_hours: src.paid_hours, description: src.description, color: src.color,
         legs_data: src.legs_data, source_template_id: src.id, allowed_days: src.allowed_days
@@ -5944,6 +5975,12 @@ function renderAdminAccountList(){
     div.appendChild(infoSpan);
     const btnGroup = document.createElement('span');
     btnGroup.style.display='flex'; btnGroup.style.gap='8px'; btnGroup.style.flexWrap='wrap';
+    if(p.id !== currentUser.id){
+      const loginAsBtn = document.createElement('button');
+      loginAsBtn.textContent = 'Log in as'; loginAsBtn.style.color='var(--teal)';
+      loginAsBtn.onclick = ()=>startImpersonation(p);
+      btnGroup.appendChild(loginAsBtn);
+    }
     const editBtn = document.createElement('button');
     editBtn.textContent = 'Edit'; editBtn.style.color='var(--text-dim)';
     editBtn.onclick = ()=>showAdminEditProfile(p, div);
@@ -5955,6 +5992,45 @@ function renderAdminAccountList(){
     div.appendChild(btnGroup);
     el.appendChild(div);
   });
+}
+
+// ---------- Admin "log in as" a user ----------
+// Uses the exact same data-loading/rendering path as a normal login
+// (loadAccountData + every tab's own render*), just re-pointed at another
+// user's rows via effectiveUserId() — so the admin edits that user's rota,
+// shifts, overrides, ratings etc. through the real, ordinary app screens
+// instead of a separate bespoke editor. The real auth session (and so
+// password changes) always stays the admin's own.
+async function startImpersonation(p){
+  if(p.id === currentUser.id) return;
+  const label = p.username ? '@' + p.username : (p.email || p.id);
+  if(!confirm('Log in as ' + label + '? You\'ll see and can edit their account using the normal app screens — rota, shifts, overrides, ratings and more. Their password is never touched. Exit any time with the banner at the top.')) return;
+  impersonating = { id: p.id, email: p.email || '', username: p.username || '' };
+  closeMenu();
+  await loadAccountData();
+  switchTab('calendar');
+  renderImpersonationBanner();
+}
+
+async function exitImpersonation(){
+  impersonating = null;
+  await loadAccountData();
+  switchTab('admin');
+  renderImpersonationBanner();
+}
+
+function renderImpersonationBanner(){
+  const banner = document.getElementById('impersonation-banner');
+  const nameEl = document.getElementById('impersonation-banner-name');
+  const pwSection = document.getElementById('account-password-section');
+  if(!banner || !nameEl) return;
+  if(impersonating){
+    nameEl.textContent = impersonating.username ? '@' + impersonating.username : impersonating.email;
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+  if(pwSection) pwSection.style.display = impersonating ? 'none' : '';
 }
 
 function showAdminEditProfile(p, parentDiv){
