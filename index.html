@@ -245,6 +245,17 @@
     <button class="tab-btn" data-tab="admin" id="admin-tab-btn" style="display:none;" onclick="switchTab('admin')">Admin</button>
   </div>
 
+  <!-- Lives outside the tab-panel system (not inside .wrap) since it's
+       opened both from the Templates tab (viewing your own templates) and
+       the Admin tab (an admin viewing a template while setting up a user's
+       rota) — a tab-panel's own display:none would hide it otherwise. -->
+  <div id="rtpl-view-box" style="display:none;max-width:600px;margin:14px auto;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--surface-alt);">
+    <p class="help" style="margin-top:0;font-weight:600;color:var(--text);" id="rtpl-view-name"></p>
+    <p class="help" style="margin:0 0 8px;">Pattern only — pick a start date under "Apply" to see it on real calendar dates.</p>
+    <div id="rtpl-view-grid" class="grid"></div>
+    <button class="btn secondary full" style="margin-top:10px;" onclick="closeViewRotaTemplate()">Close</button>
+  </div>
+
   <div class="wrap">
     <div class="tab-panel active" id="tab-calendar">
       <header style="margin-bottom:16px;">
@@ -571,12 +582,6 @@
         <p class="sec-title">Rota templates</p>
         <p class="help" style="margin-top:0;">Apply a full pre-built rota to your account — adds any required shifts to your collection and loads the complete pattern.</p>
         <div id="rota-templates-list"></div>
-        <div id="rtpl-view-box" style="display:none;margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--surface-alt);">
-          <p class="help" style="margin-top:0;font-weight:600;color:var(--text);" id="rtpl-view-name"></p>
-          <p class="help" style="margin:0 0 8px;">Pattern only — pick a start date under "Apply" to see it on real calendar dates.</p>
-          <div id="rtpl-view-grid" class="grid"></div>
-          <button class="btn secondary full" style="margin-top:10px;" onclick="closeViewRotaTemplate()">Close</button>
-        </div>
         <div id="rtpl-apply-box" style="display:none;margin-top:12px;padding:10px;border:1px solid var(--border);border-radius:7px;background:var(--surface-alt);">
           <p class="help" style="margin-top:0;font-weight:600;color:var(--text);" id="rtpl-apply-name"></p>
           <div class="row">
@@ -5510,15 +5515,18 @@ async function deleteRotaTemplate(id){
 // "scheduled rota versions" feature) or replace their whole rota immediately.
 let pendingRotaTemplateApply = null;
 
-// Renders a rota template's pattern as a read-only grid, reusing the same
-// week-marker/day-label/day-cell-readonly look as the Calendar tab's own
-// grid view. With no rotaStartForPreview it's an abstract "Week N" view (for
-// the standalone "View" button — just the pattern, no dates yet); with one,
-// it shows real calendar dates instead, and each day becomes clickable so
-// tapping it anchors the template to start there (see setRtplApplyAnchorFromPreview).
-function renderRtplPreviewGrid(containerId, pattern, weeksN, wsd, rotaStartForPreview){
+// Renders a rota pattern as a read-only grid, reusing the same week-marker/
+// day-label/day-cell-readonly look as the Calendar tab's own grid view. With
+// no rotaStartForPreview it's an abstract "Week N" view (just the pattern, no
+// dates yet); with one, it shows real calendar dates instead, and each day
+// becomes clickable so tapping it anchors the rota to start there (via
+// onCellClick(dateKey, weekNum)). shiftsArr resolves the ids in `pattern` —
+// the shared template pool by default (rota templates reference those ids),
+// or a specific user's own shift types when previewing their actual rota.
+function renderRtplPreviewGrid(containerId, pattern, weeksN, wsd, rotaStartForPreview, shiftsArr, onCellClick){
   const el = document.getElementById(containerId);
   if(!el) return;
+  shiftsArr = shiftsArr || templates;
   el.innerHTML = '';
   const labels = DAY_LABELS.slice(wsd).concat(DAY_LABELS.slice(0, wsd));
   const startDate = rotaStartForPreview ? new Date(rotaStartForPreview + 'T00:00:00') : null;
@@ -5541,16 +5549,18 @@ function renderRtplPreviewGrid(containerId, pattern, weeksN, wsd, rotaStartForPr
     for(let d = 0; d < 7; d++){
       const idx = w*7 + d;
       const value = pattern[idx] || '';
-      const shifts = splitShiftIds(value).map(id => templates.find(t => t.id === id)).filter(Boolean);
+      const shifts = splitShiftIds(value).map(id => shiftsArr.find(t => t.id === id)).filter(Boolean);
       const cell = document.createElement('div');
       cell.className = 'day-cell-readonly';
       let dateObj = null;
       if(startDate){
         dateObj = new Date(startDate); dateObj.setDate(dateObj.getDate() + idx);
         const weekNum = w + 1;
-        cell.style.cursor = 'pointer';
-        cell.title = 'Use ' + dateObj.toLocaleDateString() + ' as the start date';
-        cell.onclick = ()=>setRtplApplyAnchorFromPreview(dateKeyLocal(dateObj), weekNum);
+        if(onCellClick){
+          cell.style.cursor = 'pointer';
+          cell.title = 'Use ' + dateObj.toLocaleDateString() + ' as the start date';
+          cell.onclick = ()=>onCellClick(dateKeyLocal(dateObj), weekNum);
+        }
       }
       let inner = startDate ? String(dateObj.getDate()) : '';
       if(value === '__holiday__'){
@@ -5620,7 +5630,7 @@ function onRtplApplyAnchorChange(){
   const anchorDate = document.getElementById('rtpl-apply-anchor-date').value;
   const anchorWeek = parseInt(document.getElementById('rtpl-apply-anchor-week').value, 10) || 1;
   const rotaStartForPreview = anchorDate ? computeRotaStartFromAnchor(anchorDate, anchorWeek, wsd) : null;
-  renderRtplPreviewGrid('rtpl-apply-preview-grid', ld.pattern || [], weeksN, wsd, rotaStartForPreview);
+  renderRtplPreviewGrid('rtpl-apply-preview-grid', ld.pattern || [], weeksN, wsd, rotaStartForPreview, templates, setRtplApplyAnchorFromPreview);
 }
 
 function setRtplApplyAnchorFromPreview(dateKey, weekNum){
@@ -6256,16 +6266,31 @@ function renderAdminRotaGrid(container){
   const adWrap = mkWrap('A date on their rota', '200px');
   const adInput = document.createElement('input');
   adInput.type='date'; adInput.value=ar.anchorDate || '';
-  adInput.oninput=()=>{ ar.anchorDate=adInput.value; adminRecomputeRotaStart(); };
+  adInput.onchange=()=>{ ar.anchorDate=adInput.value; adminRecomputeRotaStart(); renderAdminRotaGrid(container); };
   adWrap.appendChild(adInput);
   const awWrap = mkWrap('That date is in…', '160px');
   const awSel = document.createElement('select');
   ar.anchorWeek = Math.min(ar.anchorWeek || 1, ar.weeks);
   for(let i=1;i<=ar.weeks;i++){ const o=document.createElement('option'); o.value=i; o.textContent='Week '+i; if(i===ar.anchorWeek)o.selected=true; awSel.appendChild(o); }
-  awSel.onchange=()=>{ ar.anchorWeek=parseInt(awSel.value,10); adminRecomputeRotaStart(); };
+  awSel.onchange=()=>{ ar.anchorWeek=parseInt(awSel.value,10); adminRecomputeRotaStart(); renderAdminRotaGrid(container); };
   awWrap.appendChild(awSel);
   anchorRow.appendChild(adHeading); anchorRow.appendChild(adWrap); anchorRow.appendChild(awWrap);
   container.appendChild(anchorRow);
+
+  // Live preview of the pattern below, on real calendar dates per the anchor
+  // above — re-rendered every time anything here changes, so it's always an
+  // accurate "what this user will actually see" check, not just at the point
+  // a template gets applied. Tapping a day re-anchors to it directly.
+  const previewNote = document.createElement('p');
+  previewNote.className = 'help'; previewNote.style.cssText = 'margin:8px 0 4px;';
+  previewNote.textContent = ar.anchorDate ? 'Tap a day below to use it as the anchor date instead.' : 'Set an anchor date above to preview this on real calendar dates.';
+  container.appendChild(previewNote);
+  const previewGrid = document.createElement('div');
+  previewGrid.id = 'admin-rota-preview-grid';
+  previewGrid.className = 'grid'; previewGrid.style.marginBottom = '10px';
+  container.appendChild(previewGrid);
+  renderRtplPreviewGrid('admin-rota-preview-grid', ar.pattern, ar.weeks, ar.weekStartDay, ar.anchorDate ? ar.rotaStart : null, ar.shiftTypes,
+    (dateKey, weekNum) => { ar.anchorDate = dateKey; ar.anchorWeek = weekNum; adminRecomputeRotaStart(); renderAdminRotaGrid(container); });
 
   // Apply a rota template to this user
   if(rotaTemplates.length > 0){
@@ -6277,13 +6302,19 @@ function renderAdminRotaGrid(container){
     tplSel.innerHTML = '<option value="">— Choose a template —</option>' +
       rotaTemplates.map(rt => '<option value="' + rt.id + '">' + escapeHtml(rt.name) + '</option>').join('');
     selWrap.appendChild(tplSel);
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'btn secondary'; viewBtn.textContent = 'View'; viewBtn.style.whiteSpace = 'nowrap';
+    viewBtn.onclick = ()=>{
+      const rt = rotaTemplates.find(r => r.id === tplSel.value);
+      if(rt) viewRotaTemplate(rt);
+    };
     const applyBtn = document.createElement('button');
     applyBtn.className = 'btn secondary'; applyBtn.textContent = 'Apply'; applyBtn.style.whiteSpace = 'nowrap';
     applyBtn.onclick = ()=>{
       const rt = rotaTemplates.find(r => r.id === tplSel.value);
       if(rt) applyRotaTemplateToAdmin(rt, container);
     };
-    tplWrap.appendChild(selWrap); tplWrap.appendChild(applyBtn);
+    tplWrap.appendChild(selWrap); tplWrap.appendChild(viewBtn); tplWrap.appendChild(applyBtn);
     container.appendChild(tplWrap);
   }
 
@@ -6534,6 +6565,8 @@ async function applyRotaTemplateToAdmin(rtpl, container){
   ar.weekStartDay = wsd;
   ar.pattern = resizePatternArray(tplPattern.map(v => joinShiftIds(splitShiftIds(v).map(id => idMap[id] || '').filter(Boolean))), newWeeks);
   ar.splitMode = ar.pattern.some(v => splitShiftIds(v).length > 1);
+  if(ar.anchorWeek > ar.weeks) ar.anchorWeek = ar.weeks;
+  adminRecomputeRotaStart(); // week_start_day just changed — keep the preview's real dates in sync with it
   renderAdminRotaGrid(container);
 }
 
