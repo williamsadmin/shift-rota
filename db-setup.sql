@@ -269,3 +269,43 @@ create policy "Anyone can view bustimes_service_map" on public.bustimes_service_
 drop policy if exists "Admins can manage bustimes_service_map" on public.bustimes_service_map;
 create policy "Admins can manage bustimes_service_map" on public.bustimes_service_map
   for all using (public.is_admin()) with check (public.is_admin());
+
+-- ---------------------------------------------------------------------
+-- 11. Admin "log in as user" — lets an admin view/edit another user's
+--     account through the normal app screens (not a separate editor).
+--     Most tables already had an admin-bypass policy for other features
+--     (rota_settings, overrides, shift_types, calendar_shares,
+--     tracker_shares, user_block_access); these four were still
+--     owner-only, so add the same "own row OR admin" bypass to them.
+--     pay_rates isn't created here (it predates this script) — only its
+--     policy is added/replaced, same as calendar_shares above.
+-- ---------------------------------------------------------------------
+alter table public.pay_rates enable row level security;
+drop policy if exists "Admins can manage any pay rate" on public.pay_rates;
+create policy "Admins can manage any pay rate" on public.pay_rates
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "Users manage own pins" on public.pinned_users;
+drop policy if exists "Admins can manage any pin" on public.pinned_users;
+create policy "Admins can manage any pin" on public.pinned_users
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "Users manage own overtime" on public.overtime_requests;
+drop policy if exists "Admins can manage any overtime request" on public.overtime_requests;
+create policy "Admins can manage any overtime request" on public.overtime_requests
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "Users manage own ratings" on public.shift_ratings;
+drop policy if exists "Admins can manage any shift rating" on public.shift_ratings;
+create policy "Admins can manage any shift rating" on public.shift_ratings
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "Users manage own bus ratings" on public.bus_ratings;
+drop policy if exists "Admins can manage any bus rating" on public.bus_ratings;
+create policy "Admins can manage any bus rating" on public.bus_ratings
+  for all using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
