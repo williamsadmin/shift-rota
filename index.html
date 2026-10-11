@@ -531,6 +531,7 @@
 
       <section>
         <p class="sec-title">Your top 3 buses</p>
+        <div style="max-width:200px;margin-bottom:10px;"><label>Search fleet number</label><input type="text" id="top-bus-search" placeholder="e.g. 501" oninput="onTopBusSearchInput()"></div>
         <div id="top-buses-list"></div>
       </section>
 
@@ -5352,6 +5353,12 @@ function renderBusRatingsList(){
   });
 }
 
+let topBusSearchFilter = '';
+function onTopBusSearchInput(){
+  topBusSearchFilter = document.getElementById('top-bus-search').value.trim();
+  renderTopBuses();
+}
+
 function renderTopBuses(){
   const el = document.getElementById('top-buses-list');
   if(!el) return;
@@ -5362,10 +5369,25 @@ function renderTopBuses(){
     buckets[r.bus_number].sum += r.bus_rating;
     buckets[r.bus_number].count++;
   });
-  const ranked = Object.entries(buckets)
+  const all = Object.entries(buckets)
     .map(([num, stat]) => ({ num, avg: stat.sum / stat.count, count: stat.count }))
-    .sort((a, b)=> b.avg - a.avg)
-    .slice(0, 3);
+    .sort((a, b)=> b.avg - a.avg);
+
+  const q = topBusSearchFilter.toLowerCase();
+  if(q){
+    const matches = all.filter(r => r.num.toLowerCase().includes(q));
+    if(matches.length === 0){ el.innerHTML = '<p class="empty">No rated bus matches "' + escapeHtml(topBusSearchFilter) + '".</p>'; return; }
+    el.innerHTML = '';
+    matches.forEach(r=>{
+      const div = document.createElement('div'); div.className = 'off-item';
+      div.innerHTML = '<span><strong style="color:var(--text);">Bus ' + escapeHtml(r.num) + '</strong> · '
+        + r.avg.toFixed(1) + '★ (' + r.count + ' rating' + (r.count !== 1 ? 's' : '') + ')</span>';
+      el.appendChild(div);
+    });
+    return;
+  }
+
+  const ranked = all.slice(0, 3);
   if(ranked.length === 0){ el.innerHTML = '<p class="empty">Rate a bus to see your top 3 here.</p>'; return; }
   el.innerHTML = '';
   ranked.forEach((r, i)=>{
