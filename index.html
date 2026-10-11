@@ -537,6 +537,10 @@
       <section>
         <details class="collapsible-section">
           <summary class="sec-title">Your shift ratings</summary>
+          <div class="row" style="margin-top:12px;">
+            <div><label>Search by shift</label><input type="text" id="shift-rating-search" placeholder="e.g. T01" oninput="onShiftRatingSearchInput()"></div>
+            <div><label>Or pick from list</label><select id="shift-rating-select" onchange="onShiftRatingSelectChange()"></select></div>
+          </div>
           <div id="shift-ratings-list" style="margin-top:12px;"></div>
         </details>
       </section>
@@ -544,6 +548,10 @@
       <section>
         <details class="collapsible-section">
           <summary class="sec-title">Your bus ratings</summary>
+          <div class="row" style="margin-top:12px;">
+            <div><label>Search fleet number</label><input type="text" id="bus-rating-search" placeholder="e.g. 501" oninput="onBusRatingSearchInput()"></div>
+            <div><label>Or pick from list</label><select id="bus-rating-select" onchange="onBusRatingSelectChange()"></select></div>
+          </div>
           <div id="bus-ratings-list" style="margin-top:12px;"></div>
         </details>
       </section>
@@ -5190,12 +5198,39 @@ async function deleteShiftRating(dateStr){
   renderRatingsTab();
 }
 
+// Fills a "pick from list" <select> with the distinct values present in
+// ratings (sorted, numeric-aware so fleet numbers like "9" < "10" sort
+// right), keeping the current filter selected if it's still in the list.
+function populateRatingFilterSelect(selectEl, values, currentFilter, allLabel){
+  if(!selectEl) return;
+  const distinct = Array.from(new Set(values.filter(Boolean))).sort((a,b)=> a.localeCompare(b, undefined, {numeric:true, sensitivity:'base'}));
+  selectEl.innerHTML = '<option value="">' + escapeHtml(allLabel) + ' (' + distinct.length + ')</option>'
+    + distinct.map(v => '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>').join('');
+  selectEl.value = distinct.includes(currentFilter) ? currentFilter : '';
+}
+
+let shiftRatingFilter = '';
+function onShiftRatingSearchInput(){
+  shiftRatingFilter = document.getElementById('shift-rating-search').value.trim();
+  renderShiftRatingsList();
+}
+function onShiftRatingSelectChange(){
+  shiftRatingFilter = document.getElementById('shift-rating-select').value;
+  const search = document.getElementById('shift-rating-search');
+  if(search) search.value = shiftRatingFilter;
+  renderShiftRatingsList();
+}
+
 function renderShiftRatingsList(){
   const el = document.getElementById('shift-ratings-list');
   if(!el) return;
+  populateRatingFilterSelect(document.getElementById('shift-rating-select'), myShiftRatings.map(r => r.shift_name), shiftRatingFilter, 'All rated shifts');
   if(myShiftRatings.length === 0){ el.innerHTML = '<p class="empty">No shift ratings yet.</p>'; return; }
+  const q = shiftRatingFilter.toLowerCase();
+  const filtered = q ? myShiftRatings.filter(r => (r.shift_name || '').toLowerCase().includes(q)) : myShiftRatings;
+  if(filtered.length === 0){ el.innerHTML = '<p class="empty">No shift ratings match "' + escapeHtml(shiftRatingFilter) + '".</p>'; return; }
   el.innerHTML = '';
-  myShiftRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
+  filtered.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
     const div = document.createElement('div'); div.className = 'off-item';
     const dt = new Date(r.rating_date + 'T00:00:00');
     const stars = '★'.repeat(r.shift_rating) + '☆'.repeat(5 - r.shift_rating);
@@ -5284,12 +5319,28 @@ async function deleteBusRating(dateStr, busNumber){
   renderRatingsTab();
 }
 
+let busRatingFilter = '';
+function onBusRatingSearchInput(){
+  busRatingFilter = document.getElementById('bus-rating-search').value.trim();
+  renderBusRatingsList();
+}
+function onBusRatingSelectChange(){
+  busRatingFilter = document.getElementById('bus-rating-select').value;
+  const search = document.getElementById('bus-rating-search');
+  if(search) search.value = busRatingFilter;
+  renderBusRatingsList();
+}
+
 function renderBusRatingsList(){
   const el = document.getElementById('bus-ratings-list');
   if(!el) return;
+  populateRatingFilterSelect(document.getElementById('bus-rating-select'), myBusRatings.map(r => r.bus_number), busRatingFilter, 'All rated buses');
   if(myBusRatings.length === 0){ el.innerHTML = '<p class="empty">No bus ratings yet.</p>'; return; }
+  const q = busRatingFilter.toLowerCase();
+  const filtered = q ? myBusRatings.filter(r => (r.bus_number || '').toLowerCase().includes(q)) : myBusRatings;
+  if(filtered.length === 0){ el.innerHTML = '<p class="empty">No bus ratings match "' + escapeHtml(busRatingFilter) + '".</p>'; return; }
   el.innerHTML = '';
-  myBusRatings.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
+  filtered.slice().sort((a,b)=> a.rating_date < b.rating_date ? 1 : -1).forEach(r=>{
     const div = document.createElement('div'); div.className = 'off-item';
     const dt = new Date(r.rating_date + 'T00:00:00');
     const stars = '★'.repeat(r.bus_rating) + '☆'.repeat(5 - r.bus_rating);
