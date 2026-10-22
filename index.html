@@ -3512,6 +3512,52 @@ function resizePatternArray(arr, newWeeks){
   return copy;
 }
 
+// Moves one week (7 consecutive days) from fromIdx to toIdx (both 0-based
+// week indexes) in a flat pattern array, shifting the weeks between them to
+// fill the gap. Used by every rota-pattern editor (personal Setup tab, admin
+// per-user grid, rota-template builder).
+function moveWeekInPatternArr(arr, fromIdx, toIdx){
+  const weeksArr = [];
+  for(let i=0; i<arr.length; i+=7) weeksArr.push(arr.slice(i, i+7));
+  const [moved] = weeksArr.splice(fromIdx, 1);
+  weeksArr.splice(toIdx, 0, moved);
+  return [].concat(...weeksArr);
+}
+
+// Remaps a 0-based week index after moveWeekInPatternArr(fromIdx, toIdx), so
+// something tracked by week position (e.g. an anchor week) follows the move.
+function remapWeekIndexForMove(idx, fromIdx, toIdx){
+  if(idx === fromIdx) return toIdx;
+  if(fromIdx < toIdx){ if(idx > fromIdx && idx <= toIdx) return idx - 1; }
+  else if(idx >= toIdx && idx < fromIdx) return idx + 1;
+  return idx;
+}
+
+// The "Move to week N" dropdown + "Delete week" button shown in a pattern
+// grid's week-marker row — shared by the personal Setup tab, the admin
+// per-user grid and the rota-template builder. onMove(fromIdx, toIdx) and
+// onDelete(idx) take 0-based week indexes.
+function buildWeekReorderControls(w, weeksCount, onMove, onDelete){
+  const wrap = document.createElement('span');
+  wrap.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+  const moveSel = document.createElement('select');
+  moveSel.title = 'Move this week to…';
+  moveSel.style.cssText = 'font-size:10px;padding:2px 4px;width:auto;text-transform:none;letter-spacing:normal;';
+  for(let i=0; i<weeksCount; i++){
+    const o = document.createElement('option'); o.value = i; o.textContent = 'Move to week ' + (i+1);
+    if(i === w) o.selected = true;
+    moveSel.appendChild(o);
+  }
+  moveSel.onchange = () => onMove(w, parseInt(moveSel.value, 10));
+  wrap.appendChild(moveSel);
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button'; delBtn.textContent = 'Delete week';
+  delBtn.style.cssText = 'font-size:10px;letter-spacing:normal;text-transform:none;color:var(--danger);background:none;border:none;padding:0;cursor:pointer;';
+  delBtn.onclick = () => onDelete(w);
+  wrap.appendChild(delBtn);
+  return wrap;
+}
+
 function changeWeekStartDay(){
   weekStartDay = parseInt(document.getElementById('week-start-day').value, 10);
   recomputeRotaStartFromAnchor();
@@ -3535,6 +3581,19 @@ function deleteWeekFromPattern(weekIndex){
     if(anchorWeek > weekIndex + 1) anchorWeek -= 1;
     populateAnchorWeekSelect();
     anchorSel.value = String(Math.max(1, Math.min(anchorWeek, weeks)));
+  }
+  recomputeRotaStartFromAnchor();
+  renderGrid();
+}
+
+function moveWeekInPersonalPattern(fromIdx, toIdx){
+  if(fromIdx === toIdx) return;
+  pattern = moveWeekInPatternArr(pattern, fromIdx, toIdx);
+  const anchorSel = document.getElementById('rota-anchor-week');
+  if(anchorSel){
+    const anchorIdx = remapWeekIndexForMove((parseInt(anchorSel.value, 10) || 1) - 1, fromIdx, toIdx);
+    populateAnchorWeekSelect();
+    anchorSel.value = String(Math.max(1, Math.min(anchorIdx + 1, weeks)));
   }
   recomputeRotaStartFromAnchor();
   renderGrid();
@@ -3915,11 +3974,7 @@ function renderGrid(){
     markerLabel.textContent = 'Week ' + (w+1);
     marker.appendChild(markerLabel);
     if(weeks > 1){
-      const delWeekBtn = document.createElement('button');
-      delWeekBtn.type = 'button'; delWeekBtn.textContent = 'Delete week';
-      delWeekBtn.style.cssText = 'font-size:10px;letter-spacing:normal;text-transform:none;color:var(--danger);background:none;border:none;padding:0;cursor:pointer;';
-      delWeekBtn.onclick = () => deleteWeekFromPattern(w);
-      marker.appendChild(delWeekBtn);
+      marker.appendChild(buildWeekReorderControls(w, weeks, moveWeekInPersonalPattern, deleteWeekFromPattern));
     }
     grid.appendChild(marker);
     getDayLabels().forEach(d=>{
@@ -5554,6 +5609,21 @@ function changeRtplWeeks(){
   renderRtplGrid();
 }
 
+function moveWeekInRtplPattern(fromIdx, toIdx){
+  if(fromIdx === toIdx) return;
+  rtplPattern = moveWeekInPatternArr(rtplPattern, fromIdx, toIdx);
+  renderRtplGrid();
+}
+
+function deleteWeekFromRtplPattern(weekIdx){
+  if(rtplWeeks <= 1){ alert('This template needs at least 1 week.'); return; }
+  if(!confirm('Delete Week ' + (weekIdx+1) + ' from this template? Every week after it shifts up by one. This doesn\'t save until you save the template.')) return;
+  rtplPattern.splice(weekIdx * 7, 7);
+  rtplWeeks -= 1;
+  document.getElementById('rtpl-weeks').value = String(rtplWeeks);
+  renderRtplGrid();
+}
+
 function onRtplSplitShiftsToggle(checkbox){
   if(!checkbox.checked){
     const hasMulti = rtplPattern.some(v => splitShiftIds(v).length > 1);
@@ -5581,7 +5651,11 @@ function renderRtplGrid(){
   for(let w=0; w<rtplWeeks; w++){
     const marker = document.createElement('div');
     marker.className = 'week-marker';
-    marker.textContent = 'Week ' + (w+1);
+    marker.style.cssText += 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+    const markerLabel = document.createElement('span'); markerLabel.textContent = 'Week ' + (w+1); marker.appendChild(markerLabel);
+    if(rtplWeeks > 1){
+      marker.appendChild(buildWeekReorderControls(w, rtplWeeks, moveWeekInRtplPattern, deleteWeekFromRtplPattern));
+    }
     grid.appendChild(marker);
     labels.forEach(d=>{ const l=document.createElement('div'); l.className='day-label'; l.textContent=d; grid.appendChild(l); });
     for(let d=0; d<7; d++){
@@ -6462,6 +6536,27 @@ function adminRecomputeRotaStart(){
   ar.rotaStart = dateKeyLocal(start);
 }
 
+function moveWeekInAdminPattern(fromIdx, toIdx, container){
+  if(fromIdx === toIdx) return;
+  const ar = adminEditRota;
+  ar.pattern = moveWeekInPatternArr(ar.pattern, fromIdx, toIdx);
+  ar.anchorWeek = Math.max(1, Math.min(remapWeekIndexForMove((ar.anchorWeek || 1) - 1, fromIdx, toIdx) + 1, ar.weeks));
+  adminRecomputeRotaStart();
+  renderAdminRotaGrid(container);
+}
+
+function deleteWeekFromAdminPattern(weekIdx, container){
+  const ar = adminEditRota;
+  if(ar.weeks <= 1){ alert('This rota needs at least 1 week.'); return; }
+  if(!confirm('Delete Week ' + (weekIdx+1) + ' from this user\'s pattern? Every week after it shifts up by one. This doesn\'t save until you press one of the save buttons below.')) return;
+  ar.pattern.splice(weekIdx * 7, 7);
+  ar.weeks -= 1;
+  if(ar.anchorWeek > weekIdx + 1) ar.anchorWeek -= 1;
+  ar.anchorWeek = Math.max(1, Math.min(ar.anchorWeek, ar.weeks));
+  adminRecomputeRotaStart();
+  renderAdminRotaGrid(container);
+}
+
 function renderAdminRotaGrid(container){
   const ar = adminEditRota;
   container.innerHTML = '';
@@ -6618,7 +6713,13 @@ function renderAdminRotaGrid(container){
   grid.className = 'grid'; grid.style.marginBottom = '10px';
 
   for(let w=0;w<ar.weeks;w++){
-    const marker=document.createElement('div'); marker.className='week-marker'; marker.textContent='Week '+(w+1); grid.appendChild(marker);
+    const marker=document.createElement('div'); marker.className='week-marker';
+    marker.style.cssText += 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
+    const markerLabel=document.createElement('span'); markerLabel.textContent='Week '+(w+1); marker.appendChild(markerLabel);
+    if(ar.weeks > 1){
+      marker.appendChild(buildWeekReorderControls(w, ar.weeks, (f,t)=>moveWeekInAdminPattern(f,t,container), (idx)=>deleteWeekFromAdminPattern(idx,container)));
+    }
+    grid.appendChild(marker);
     for(let d=0;d<7;d++){ const lbl=document.createElement('div'); lbl.className='day-label'; lbl.textContent=DAY_LABELS[(ar.weekStartDay+d)%7]; grid.appendChild(lbl); }
     for(let d=0;d<7;d++){
       const idx=w*7+d; const realWeekday=(ar.weekStartDay+d)%7;
