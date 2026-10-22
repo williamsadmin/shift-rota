@@ -898,6 +898,10 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           <div><label>Start time</label><input type="time" id="st-start" value="09:00"></div>
           <div><label>End time</label><input type="time" id="st-end" value="17:00"></div>
         </div>
+        <div class="checkbox-row" id="st-early-start-row">
+          <input type="checkbox" id="st-early-start">
+          <label for="st-early-start">Show an earlier clock-on time (5 min earlier, rounded down to the nearest 5 — e.g. 13:53 shows as 13:45)</label>
+        </div>
         <div class="row" id="st-paid-row">
           <div><label>Paid hours (HH:MM)</label><input type="text" id="st-paid" placeholder="e.g. 08:43"></div>
         </div>
@@ -1520,6 +1524,20 @@ function shiftTimeLabel(shift){
   return ' (' + shift.start_time + '–' + shift.end_time + ')';
 }
 
+// A shift with "show an earlier start" on displays its clock-on time 5
+// minutes earlier than start_time, then floored to the nearest 5-minute
+// mark — e.g. 13:53 becomes 13:45 (not just 13:48).
+function computeEarlyStartClock(startTimeStr){
+  const minsBefore = timeToMin(startTimeStr) - 5;
+  const floored = Math.floor((((minsBefore % 1440) + 1440) % 1440) / 5) * 5;
+  return formatClock(floored);
+}
+
+function shiftClockOnLabel(shift){
+  if(!shift || shift.all_day || !shift.start_time) return '';
+  return 'Clock on: ' + (shift.show_early_start ? computeEarlyStartClock(shift.start_time) : shift.start_time);
+}
+
 // A day's pattern value is normally a single shift-type id, '' (rest day), or
 // '__holiday__' (override only). With split shifts it can also be several
 // shift-type ids joined by commas — these helpers keep that encoding in one place.
@@ -1659,8 +1677,10 @@ function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix){
       if(i > 0) html += '<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">';
       html += '<p class="help" style="margin:0 0 4px;"><strong style="color:var(--text);">' + escapeHtml(shift.name) + '</strong>' + shiftTimeLabel(shift) + '</p>';
       if(shift.paid_hours) html += '<p class="help" style="margin:0 0 4px;">Paid hours: ' + escapeHtml(shift.paid_hours) + '</p>';
-      if(shift.description) html += '<div class="leg-summary" style="margin-top:8px;">' + escapeHtml(shift.description) + '</div>';
-      else html += '<p class="help" style="margin:6px 0 0;">No duty board details added for this shift.</p>';
+      const clockOnLabel = shiftClockOnLabel(shift);
+      if(clockOnLabel) html += '<p class="help" style="margin:6px 0 2px;font-weight:600;color:var(--text);">' + escapeHtml(clockOnLabel) + '</p>';
+      if(shift.description) html += '<div class="leg-summary" style="margin-top:4px;">' + escapeHtml(shift.description) + '</div>';
+      else html += '<p class="help" style="margin:4px 0 0;">No duty board details added for this shift.</p>';
     });
   } else {
     html += '<p class="help" style="margin:0;">Rest day</p>';
@@ -2866,6 +2886,7 @@ document.addEventListener('click', (e)=>{
 // ---------- ACCOUNT & SETUP TAB ----------
 document.getElementById('st-allday').addEventListener('change', (e)=>{
   document.getElementById('st-time-row').style.display = e.target.checked ? 'none' : 'flex';
+  document.getElementById('st-early-start-row').style.display = e.target.checked ? 'none' : 'flex';
 });
 
 // Text swaps applied when accountType === 'education'. Each entry is a CSS
@@ -3114,6 +3135,7 @@ async function addShiftType(){
   const allDay = document.getElementById('st-allday').checked;
   const start = document.getElementById('st-start').value;
   const end = document.getElementById('st-end').value;
+  const showEarlyStart = !allDay && document.getElementById('st-early-start').checked;
   const paidHours = document.getElementById('st-paid').value.trim();
   const description = document.getElementById('st-desc').value.trim();
   const color = document.getElementById('st-color').value;
@@ -3122,7 +3144,7 @@ async function addShiftType(){
 
   const payload = {
     is_template: false, name,
-    all_day: allDay, start_time: start, end_time: end,
+    all_day: allDay, start_time: start, end_time: end, show_early_start: showEarlyStart,
     paid_hours: paidHours, description, color, legs_data: legsData, allowed_days: allowedDays
   };
 
@@ -3213,6 +3235,11 @@ function copyFromExisting(prefix){
   document.getElementById(prefix + '-color').value = source.color || '#F2A93B';
   document.getElementById(prefix + '-allday').checked = source.all_day;
   document.getElementById(prefix + '-time-row').style.display = source.all_day ? 'none' : 'flex';
+  const earlyStartRow = document.getElementById(prefix + '-early-start-row');
+  if(earlyStartRow){
+    earlyStartRow.style.display = source.all_day ? 'none' : 'flex';
+    document.getElementById(prefix + '-early-start').checked = !!source.show_early_start;
+  }
   document.getElementById(prefix + '-start').value = source.start_time || '09:00';
   document.getElementById(prefix + '-end').value = source.end_time || '17:00';
   document.getElementById(prefix + '-paid').value = source.paid_hours || '';
@@ -3287,8 +3314,10 @@ function startEditShiftType(s){
   document.getElementById('st-color').value = s.color || '#F2A93B';
   document.getElementById('st-allday').checked = s.all_day;
   document.getElementById('st-time-row').style.display = s.all_day ? 'none' : 'flex';
+  document.getElementById('st-early-start-row').style.display = s.all_day ? 'none' : 'flex';
   document.getElementById('st-start').value = s.start_time || '09:00';
   document.getElementById('st-end').value = s.end_time || '17:00';
+  document.getElementById('st-early-start').checked = !!s.show_early_start;
   document.getElementById('st-paid').value = s.paid_hours || '';
   setAllowedDaysOnForm(s.allowed_days, 'st');
   legBuilders.st = (s.legs_data && Array.isArray(s.legs_data)) ? JSON.parse(JSON.stringify(s.legs_data)) : [];
@@ -3329,6 +3358,8 @@ function cancelEdit(prefix){
   if(copySel) copySel.value = '';
   document.getElementById(prefix + '-allday').checked = false;
   document.getElementById(prefix + '-time-row').style.display = 'flex';
+  const earlyStartRow = document.getElementById(prefix + '-early-start-row');
+  if(earlyStartRow){ earlyStartRow.style.display = 'flex'; document.getElementById(prefix + '-early-start').checked = false; }
   legBuilders[prefix] = [];
   renderLegRows(prefix);
   document.getElementById(prefix + '-submit-btn').textContent = prefix === 'st' ? 'Add shift type' : 'Create template';
