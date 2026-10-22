@@ -309,3 +309,10 @@ drop policy if exists "Admins can manage any bus rating" on public.bus_ratings;
 create policy "Admins can manage any bus rating" on public.bus_ratings
   for all using (user_id = auth.uid() or public.is_admin())
   with check (user_id = auth.uid() or public.is_admin());
+
+-- ---------------------------------------------------------------------
+-- 12. Per-shift "show an earlier clock-on time" toggle (Setup tab) — the
+--     day-detail view then displays start_time minus 5 minutes, floored to
+--     the nearest 5-minute mark, instead of the real start time.
+-- ---------------------------------------------------------------------
+alter table public.shift_types add column if not exists show_early_start boolean not null default false;
