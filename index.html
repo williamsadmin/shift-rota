@@ -1578,6 +1578,9 @@ function multiShiftNameLabel(shifts){
 function multiShiftTimeLabel(shifts){
   return shifts.map(s => shiftTimeLabel(s)).join('');
 }
+function multiShiftDisplayTimeLabel(shifts, applyEarlyStart){
+  return shifts.map(s => shiftDisplayTimeLabel(s, applyEarlyStart)).join('');
+}
 // A single color for one shift, or an even-banded gradient for several — used
 // anywhere a day cell needs to show it's a split shift at a glance.
 function multiShiftBackground(shifts){
@@ -4787,7 +4790,7 @@ function renderCalendarTab(){
         label += ' — <span class="cal-shift-name">Holiday</span>';
       } else if(shifts.length){
         swatch = shifts.map(s => '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + (s.color||'#F2A93B') + ';margin-right:4px;"></span>').join('');
-        label += ' — <span class="cal-shift-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftTimeLabel(shifts));
+        label += ' — <span class="cal-shift-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true));
         if(payRates.enabled) label += ' (£' + dayPay.toFixed(2) + ')';
       } else {
         label += ' — <span class="cal-shift-name">RD</span>';
@@ -4837,7 +4840,7 @@ function renderCalendarTab(){
       } else if(shifts.length){
         cell.style.background = multiShiftBackground(shifts);
         cell.style.color = '#203143';
-        inner += '<span class="cal-grid-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span><span class="pay-line">' + escapeHtml(multiShiftTimeLabel(shifts)) + (payRates.enabled ? ' £'+dayPay.toFixed(2) : '') + '</span>';
+        inner += '<span class="cal-grid-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span><span class="pay-line">' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true)) + (payRates.enabled ? ' £'+dayPay.toFixed(2) : '') + '</span>';
       } else {
         inner += '<span class="cal-grid-name">RD</span>';
       }
