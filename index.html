@@ -1678,10 +1678,17 @@ function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix){
       if(i > 0) html += '<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">';
       html += '<p class="help" style="margin:0 0 4px;"><strong style="color:var(--text);">' + escapeHtml(shift.name) + '</strong>' + shiftTimeLabel(shift) + '</p>';
       if(shift.paid_hours) html += '<p class="help" style="margin:0 0 4px;">Paid hours: ' + escapeHtml(shift.paid_hours) + '</p>';
+      // Clock on is always the very first line inside the description box
+      // (not a separate paragraph above it) — bolded so it stands out from
+      // the duty board text that may follow it.
       const clockOnLabel = shiftClockOnLabel(shift);
-      if(clockOnLabel) html += '<p class="help" style="margin:6px 0 2px;font-weight:600;color:var(--text);">' + escapeHtml(clockOnLabel) + '</p>';
-      if(shift.description) html += '<div class="leg-summary" style="margin-top:4px;">' + escapeHtml(shift.description) + '</div>';
-      else html += '<p class="help" style="margin:4px 0 0;">No duty board details added for this shift.</p>';
+      if(clockOnLabel || shift.description){
+        let body = clockOnLabel ? '<strong style="color:var(--text);">' + escapeHtml(clockOnLabel) + '</strong>' : '';
+        if(shift.description) body += (body ? '\n' : '') + escapeHtml(shift.description);
+        html += '<div class="leg-summary" style="margin-top:6px;">' + body + '</div>';
+      } else {
+        html += '<p class="help" style="margin:4px 0 0;">No duty board details added for this shift.</p>';
+      }
     });
   } else {
     html += '<p class="help" style="margin:0;">Rest day</p>';
