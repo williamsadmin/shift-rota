@@ -829,11 +829,11 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
       </section>
 
       <section>
-        <p class="sec-title">Clock-on display</p>
-        <p class="help" style="margin-top:0;">Applies to every timed shift of yours. When a shift's details show its clock-on time, show it 5 minutes earlier, rounded down to the nearest 5 — e.g. a 13:53 start shows as 13:45.</p>
+        <p class="sec-title">Exported calendar event times</p>
+        <p class="help" style="margin-top:0;">Applies to your live calendar link (the one you sync to your phone's calendar app) — not anywhere in this app. Each event starts 5 minutes before the shift's real clock-on time, rounded down to the nearest 5 — e.g. a 13:53 start becomes a 13:45 event start. The event still ends at the real finish time; "Clock on" always shows your real, official start time.</p>
         <div class="checkbox-row">
           <input type="checkbox" id="show-early-start-toggle" onchange="saveShowEarlyStart()">
-          <label for="show-early-start-toggle">Show an earlier clock-on time</label>
+          <label for="show-early-start-toggle">Start calendar events 5 minutes earlier</label>
         </div>
         <div class="status" id="show-early-start-status"></div>
       </section>
@@ -1531,21 +1531,12 @@ function shiftTimeLabel(shift){
   return ' (' + shift.start_time + '–' + shift.end_time + ')';
 }
 
-// A shift with "show an earlier start" on displays its clock-on time 5
-// minutes earlier than start_time, then floored to the nearest 5-minute
-// mark — e.g. 13:53 becomes 13:45 (not just 13:48).
-function computeEarlyStartClock(startTimeStr){
-  const minsBefore = timeToMin(startTimeStr) - 5;
-  const floored = Math.floor((((minsBefore % 1440) + 1440) % 1440) / 5) * 5;
-  return formatClock(floored);
-}
-
-// applyEarlyStart is the viewer's own showEarlyStart preference — only
-// passed true for the signed-in user's own shifts, never a friend's (the
-// setting is personal, and friends' profiles aren't loaded here to check theirs).
-function shiftClockOnLabel(shift, applyEarlyStart){
+// Always the real, official start time — the "show an earlier start" user
+// setting only affects the exported calendar (.ics) event's start, via the
+// Cloudflare Worker, never this in-app label.
+function shiftClockOnLabel(shift){
   if(!shift || shift.all_day || !shift.start_time) return '';
-  return 'Clock on: ' + (applyEarlyStart && showEarlyStart ? computeEarlyStartClock(shift.start_time) : shift.start_time);
+  return 'Clock on: ' + shift.start_time;
 }
 
 // A day's pattern value is normally a single shift-type id, '' (rest day), or
@@ -1676,7 +1667,7 @@ function renderFriendCalendar(){
   }
 }
 
-function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix, applyEarlyStart){
+function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix){
   const dateObj = new Date(dateStr + 'T00:00:00');
   const dateLabel = dateObj.toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long', year:'numeric'});
   let html = '<p style="margin:0 0 8px;font-weight:600;color:var(--text);">' + ownerPrefix + dateLabel + '</p>';
@@ -1687,7 +1678,7 @@ function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix, applyEarlySta
       if(i > 0) html += '<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">';
       html += '<p class="help" style="margin:0 0 4px;"><strong style="color:var(--text);">' + escapeHtml(shift.name) + '</strong>' + shiftTimeLabel(shift) + '</p>';
       if(shift.paid_hours) html += '<p class="help" style="margin:0 0 4px;">Paid hours: ' + escapeHtml(shift.paid_hours) + '</p>';
-      const clockOnLabel = shiftClockOnLabel(shift, applyEarlyStart);
+      const clockOnLabel = shiftClockOnLabel(shift);
       if(clockOnLabel) html += '<p class="help" style="margin:6px 0 2px;font-weight:600;color:var(--text);">' + escapeHtml(clockOnLabel) + '</p>';
       if(shift.description) html += '<div class="leg-summary" style="margin-top:4px;">' + escapeHtml(shift.description) + '</div>';
       else html += '<p class="help" style="margin:4px 0 0;">No duty board details added for this shift.</p>';
@@ -1717,7 +1708,7 @@ function showDayDetail(dateStr){
     + (hasOt ? 'Cancel overtime request' : '💪 Request overtime this day') + '</button>';
   const swapBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="startSwapFromDay(\'' + dateStr + '\')">⇄ Swap this shift</button>';
   const upcomingBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="showUpcomingDays(\'' + dateStr + '\')">📅 Show next 7 days</button>';
-  panel.innerHTML = buildDayDetailHTML(dateStr, shifts, shiftId, 'My — ', true)
+  panel.innerHTML = buildDayDetailHTML(dateStr, shifts, shiftId, 'My — ')
     + (hasOt ? '<p class="help" style="margin:8px 0 0;color:var(--amber);">Overtime requested for this day.</p>' : '')
     + revertBtn + swapBtn + otBtn + upcomingBtn +
     '<button class="btn secondary full" style="margin-top:10px;" onclick="closeDayDetail()">Close</button>';
@@ -1962,7 +1953,7 @@ function showCompareDayDetailMulti(dateStr, people){
   if(!panel) return;
   panel.innerHTML = people.map((p, i) =>
     (i > 0 ? '<hr style="border:none;border-top:1px solid var(--border);margin:12px 0;">' : '') +
-    buildDayDetailHTML(dateStr, p.shifts, p.shiftId, p.label + ' — ', p.label === 'You')
+    buildDayDetailHTML(dateStr, p.shifts, p.shiftId, p.label + ' — ')
   ).join('') +
     '<button class="btn secondary full" style="margin-top:10px;" onclick="closeFriendDayDetail()">Close</button>';
   panel.style.display = 'block';

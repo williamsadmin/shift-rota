@@ -311,12 +311,14 @@ create policy "Admins can manage any bus rating" on public.bus_ratings
   with check (user_id = auth.uid() or public.is_admin());
 
 -- ---------------------------------------------------------------------
--- 12. Per-user "show an earlier clock-on time" toggle (Account tab) — the
---     day-detail view then displays every one of the user's own timed
---     shifts' start_time minus 5 minutes, floored to the nearest 5-minute
---     mark, instead of the real start time. Lives on the account, not the
---     shift — an earlier version of this put it on shift_types, since
---     replaced by this column; drop that one if it's already been run.
+-- 12. Per-user "start calendar events earlier" toggle (Account tab). Only
+--     read by the separate Cloudflare Worker's .ics export (not this repo)
+--     — when true, a VEVENT's DTSTART is the shift's start_time minus 5
+--     minutes, floored to the nearest 5-minute mark, while DTEND and every
+--     in-app display (e.g. "Clock on: …") keep showing the real, official
+--     start time. Lives on the account, not the shift — an earlier version
+--     of this put it on shift_types, since replaced by this column; drop
+--     that one if it's already been run.
 -- ---------------------------------------------------------------------
 alter table public.shift_types drop column if exists show_early_start;
 alter table public.profiles add column if not exists show_early_start boolean not null default false;
