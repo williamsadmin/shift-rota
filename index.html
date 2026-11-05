@@ -601,6 +601,10 @@
             </select>
           </div>
         </div>
+        <div id="tpl-mass-delete-row" style="display:none;margin-bottom:10px;">
+          <button class="btn secondary" type="button" style="color:var(--danger);" onclick="massDeleteCategoryTemplates()">Delete all in this category</button>
+          <div class="status" id="tpl-mass-delete-status"></div>
+        </div>
         <div id="templates-browse-list"></div>
       </section>
 
@@ -3487,12 +3491,18 @@ function renderTemplatesBrowseList(){
 
   const searchTerm = (document.getElementById('tpl-search')?.value || '').trim().toLowerCase();
 
+  const activeFilter = filterSelect.value === '__all__' ? null : filterSelect.value;
+  // Tied to a real category being selected (not blank, not "All"), independent
+  // of the day/search filters below — it deletes the whole category, not just
+  // whatever's currently visible under those narrower filters.
+  const massDeleteRow = document.getElementById('tpl-mass-delete-row');
+  if(massDeleteRow) massDeleteRow.style.display = (isAdmin && activeFilter) ? 'block' : 'none';
+
   if(!filterSelect.value && !searchTerm){
     el.innerHTML = '<p class="empty">Select a category above to browse shift templates, choose "All" to see everything, or search by name.</p>';
     return;
   }
 
-  const activeFilter = filterSelect.value === '__all__' ? null : filterSelect.value;
   let visible = activeFilter ? accessibleTemplates.filter(t => t.category === activeFilter) : accessibleTemplates;
 
   const dayFilterSelect = document.getElementById('tpl-day-filter');
@@ -3518,16 +3528,25 @@ function renderTemplatesBrowseList(){
   visible.forEach(t=>{
     const div = document.createElement('div');
     div.className = 'off-item';
+    div.style.cssText = 'flex-direction:column;align-items:stretch;gap:4px;';
     const timeLabel = t.all_day ? 'no fixed time' : (t.start_time + '–' + t.end_time);
     const swatch = '<span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:' + (t.color || '#43C6AC') + ';margin-right:8px;"></span>';
     const catBadge = t.category ? ' <span style="color:var(--amber);font-size:11px;">· ' + escapeHtml(t.category) + '</span>' : '';
-    let dayBadge = '';
+
+    const nameLine = document.createElement('div');
+    nameLine.innerHTML = swatch + escapeHtml(t.name) + ' · ' + timeLabel + (t.paid_hours ? ' · paid ' + t.paid_hours : '') + catBadge;
+    div.appendChild(nameLine);
+
     if(t.allowed_days && Array.isArray(t.allowed_days) && t.allowed_days.some(v => v === false)){
       const allowedNames = dayShortNames.filter((_, i) => t.allowed_days[i] !== false);
-      dayBadge = ' <span style="color:var(--text-dim);font-size:11px;">· ' + allowedNames.join('/') + ' only</span>';
+      const dayLine = document.createElement('div');
+      dayLine.style.cssText = 'color:var(--text-dim);font-size:11px;';
+      dayLine.textContent = allowedNames.join('/') + ' only';
+      div.appendChild(dayLine);
     }
-    div.innerHTML = '<span>' + swatch + escapeHtml(t.name) + ' · ' + timeLabel + (t.paid_hours ? ' · paid ' + t.paid_hours : '') + catBadge + dayBadge + '</span>';
-    const btnGroup = document.createElement('span');
+
+    const btnGroup = document.createElement('div');
+    btnGroup.style.cssText = 'display:flex;gap:12px;flex-wrap:nowrap;';
     const addBtn = document.createElement('button');
     addBtn.textContent = 'Add to mine';
     addBtn.style.color = 'var(--teal)';
@@ -3536,18 +3555,38 @@ function renderTemplatesBrowseList(){
     if(isAdmin){
       const editBtn = document.createElement('button');
       editBtn.textContent = 'Edit';
-      editBtn.style.marginLeft = '10px';
       editBtn.onclick = ()=>startEditTemplate(t);
       btnGroup.appendChild(editBtn);
       const delBtn = document.createElement('button');
       delBtn.textContent = 'Delete';
-      delBtn.style.marginLeft = '10px';
       delBtn.onclick = ()=>deleteTemplate(t.id);
       btnGroup.appendChild(delBtn);
     }
     div.appendChild(btnGroup);
     el.appendChild(div);
   });
+}
+
+async function massDeleteCategoryTemplates(){
+  const filterSelect = document.getElementById('tpl-filter');
+  const category = filterSelect.value;
+  if(!category || category === '__all__') return;
+  const toDelete = templates.filter(t => t.category === category);
+  if(toDelete.length === 0) return;
+  if(!confirm('Delete all ' + toDelete.length + ' template(s) in "' + category + '"? Users\' copies will remain but will no longer receive updates. This cannot be undone.')) return;
+  const statusEl = document.getElementById('tpl-mass-delete-status');
+  for(let i = 0; i < toDelete.length; i++){
+    statusEl.style.color = 'var(--text-dim)';
+    statusEl.textContent = 'Deleting ' + (i+1) + ' of ' + toDelete.length + '…';
+    const id = toDelete[i].id;
+    await sb.from('shift_types').update({ source_template_id: null }).eq('source_template_id', id);
+    await sb.from('shift_types').delete().eq('id', id);
+    templates = templates.filter(t => t.id !== id);
+  }
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = 'Deleted ' + toDelete.length + ' template(s).';
+  populateCopyFromSelects();
+  renderTemplatesBrowseList();
 }
 
 function getAllowedDaysFromForm(prefix){
