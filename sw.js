@@ -1,6 +1,6 @@
 // Shift Rota service worker — makes the app installable and works offline for
 // the app shell. Supabase / CDN requests are left to the network.
-const CACHE = 'shift-rota-v6';
+const CACHE = 'shift-rota-v7';
 const SHELL = [
   './',
   './index.html',
@@ -37,8 +37,13 @@ self.addEventListener('fetch', (e) => {
     // a path-based tracker share link (e.g. /theryantracker) that doesn't
     // match a real file resolves as an HTTP 404 (GitHub Pages serves 404.html
     // for it), which must never overwrite the cached real app shell.
+    // fetch(req.url, {cache:'no-store'}) rather than fetch(req) — passing the
+    // original request let the browser's own HTTP cache (not just this
+    // Service Worker's cache) silently satisfy it, so a code update could sit
+    // unseen through several reloads, especially on iOS. no-store forces a
+    // genuine round trip every time.
     e.respondWith(
-      fetch(req)
+      fetch(req.url, { cache: 'no-store' })
         .then((res) => {
           if(res.ok){
             const copy = res.clone();
