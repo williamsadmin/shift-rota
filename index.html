@@ -708,6 +708,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="checkbox-row" style="margin-top:8px;"><input type="checkbox" id="tpl-import-create" checked><label for="tpl-import-create">Create shift templates for codes that don't exist yet (with their times)</label></div>
         <button class="btn full" type="button" onclick="importRotaIntoTemplate()">Import into rota template</button>
         <div class="status" id="tpl-import-status"></div>
+        <div id="tpl-import-ambiguous"></div>
       </section>
 
       <section id="template-create-section">
@@ -3919,6 +3920,9 @@ function changeWeeks(){
 // ---------- Rota import (paste a full multi-week rota as text) ----------
 const IMPORT_MAX_WEEKS = 26;
 const IMPORT_PALETTE = ['#F2A93B','#43C6AC','#E2574C','#E08F4F','#6C8EBF','#9B7EDE','#3FA796','#D96BA0','#C9A227','#5FA8D3'];
+// Set while importRotaIntoTemplate() is waiting on the admin to resolve
+// ambiguous same-named shift templates (see resolveRotaImportAmbiguities()).
+let pendingRotaImport = null;
 
 function importTimeToHHMM(t){
   const digits = (t || '').replace(/[^0-9]/g, '');
@@ -3997,6 +4001,8 @@ async function extractPdfToImportBox(input){
 
 async function importRotaIntoTemplate(){
   const statusEl = document.getElementById('tpl-import-status');
+  document.getElementById('tpl-import-ambiguous').innerHTML = '';
+  pendingRotaImport = null;
   const raw = (document.getElementById('tpl-import-text').value || '').trim();
   const fail = (msg)=>{ statusEl.style.color = 'var(--danger)'; statusEl.textContent = msg; };
   if(!raw){ return fail('Load a PDF or paste your rota first.'); }
@@ -4011,41 +4017,138 @@ async function importRotaIntoTemplate(){
   }
   const parsed = grid.map(r => r.map(parseRotaCell));
 
-  // Collect unique codes with their first-seen times
+  // Collect unique codes with their first-seen times, and which calendar
+  // weekdays (0=Sun..6=Sat, matching this grid's fixed Sun→Sat columns)
+  // each code is actually used on — needed below to disambiguate same-named
+  // shift templates (e.g. a duty split into separate Mon-Thu / Fri shifts
+  // by the PDF importer still shares one duty-number name).
   const codeInfo = {};
-  parsed.forEach(week => week.forEach(cell => {
+  parsed.forEach(week => week.forEach((cell, dayIdx) => {
     if(cell.rest) return;
     const key = cell.code.toUpperCase();
-    if(!codeInfo[key]) codeInfo[key] = { code: cell.code, start: cell.start, end: cell.end };
+    if(!codeInfo[key]) codeInfo[key] = { code: cell.code, start: cell.start, end: cell.end, weekdays: new Set() };
     else if(!codeInfo[key].start && cell.start){ codeInfo[key].start = cell.start; codeInfo[key].end = cell.end; }
+    codeInfo[key].weekdays.add(dayIdx);
   }));
 
   const createMissing = document.getElementById('tpl-import-create').checked;
   const category = document.getElementById('tpl-import-category').value.trim();
-  const codeToId = {};
+  const codeToId = {};       // key -> id, when every occurrence of a code resolves the same way
+  const codeToIdByDay = {};  // key -> { weekday: id }, when same-named shifts differ by weekday
   const unmatched = [];
+  const ambiguous = [];      // { code, weekday, candidates } the admin needs to pick between
   let createdCount = 0;
   for(const key of Object.keys(codeInfo)){
     const info = codeInfo[key];
-    const existing = templates.find(t => (t.name || '').toUpperCase() === key);
-    if(existing){ codeToId[key] = existing.id; continue; }
-    if(!createMissing){ unmatched.push(info.code); continue; }
-    const hasTimes = !!(info.start && info.end);
-    const { data, error } = await sb.from('shift_types').insert({
-      owner_id: null, is_template: true, name: info.code,
-      all_day: !hasTimes, start_time: hasTimes ? info.start : '', end_time: hasTimes ? info.end : '',
-      paid_hours: '', description: '', color: IMPORT_PALETTE[createdCount % IMPORT_PALETTE.length],
-      legs_data: null, category: category, allowed_days: [true,true,true,true,true,true,true]
-    }).select().single();
-    if(error){ return fail('Could not create shift template "' + info.code + '": ' + error.message); }
-    if(data){ templates.push(data); codeToId[key] = data.id; createdCount++; }
+    const candidates = templates.filter(t => (t.name || '').toUpperCase() === key);
+
+    if(candidates.length === 0){
+      if(!createMissing){ unmatched.push(info.code); continue; }
+      const hasTimes = !!(info.start && info.end);
+      const { data, error } = await sb.from('shift_types').insert({
+        owner_id: null, is_template: true, name: info.code,
+        all_day: !hasTimes, start_time: hasTimes ? info.start : '', end_time: hasTimes ? info.end : '',
+        paid_hours: '', description: '', color: IMPORT_PALETTE[createdCount % IMPORT_PALETTE.length],
+        legs_data: null, category: category, allowed_days: [true,true,true,true,true,true,true]
+      }).select().single();
+      if(error){ return fail('Could not create shift template "' + info.code + '": ' + error.message); }
+      if(data){ templates.push(data); codeToId[key] = data.id; createdCount++; }
+      continue;
+    }
+
+    if(candidates.length === 1){ codeToId[key] = candidates[0].id; continue; }
+
+    // Multiple shift templates share this name — resolve per weekday it's
+    // actually used on: prefer whichever one is allowed that day, fall back
+    // to any of them (it'll show "(not allowed this day)" in the grid) if
+    // none are, and ask the admin to pick when more than one validly is.
+    const byDay = {};
+    info.weekdays.forEach(weekday => {
+      const allowedHere = candidates.filter(c => !c.allowed_days || c.allowed_days[weekday] !== false);
+      if(allowedHere.length === 1) byDay[weekday] = allowedHere[0].id;
+      else if(allowedHere.length === 0) byDay[weekday] = candidates[0].id;
+      else ambiguous.push({ code: info.code, key, weekday, candidates: allowedHere });
+    });
+    codeToIdByDay[key] = byDay;
   }
 
-  // Fill the rota-template builder. Columns are Sun→Sat, so start the week on Sunday.
+  const pending = { parsed, codeToId, codeToIdByDay, unmatched, createdCount };
+  if(ambiguous.length){
+    pendingRotaImport = pending;
+    statusEl.style.color = 'var(--amber)';
+    statusEl.textContent = 'Some shift codes have more than one matching template for a given day — resolve ' +
+      (ambiguous.length === 1 ? 'it' : 'them') + ' below, then continue.';
+    renderRotaImportAmbiguities(ambiguous);
+    return;
+  }
+  finishRotaImport(pending);
+}
+
+// Shows one row per ambiguous (code, weekday) pair from importRotaIntoTemplate()
+// — more than one shift template shares that name and is allowed on that
+// weekday, so the admin picks which one, then confirms to finish the import.
+function renderRotaImportAmbiguities(ambiguous){
+  const box = document.getElementById('tpl-import-ambiguous');
+  box.innerHTML = '';
+  box.style.cssText = 'margin-top:10px;padding:10px;border:1px solid var(--border);border-radius:7px;';
+  const heading = document.createElement('p');
+  heading.className = 'help'; heading.style.cssText = 'margin:0 0 8px;color:var(--text);';
+  heading.textContent = 'Pick which shift each ambiguous code means on that day:';
+  box.appendChild(heading);
+  ambiguous.forEach((amb) => {
+    const row = document.createElement('div');
+    row.className = 'row'; row.style.marginBottom = '6px';
+    const wrap = document.createElement('div'); wrap.style.flex = '1';
+    const lbl = document.createElement('label');
+    lbl.textContent = amb.code + ' on ' + DAY_LABELS[amb.weekday] + 's';
+    const sel = document.createElement('select');
+    sel.dataset.ambKey = amb.key;
+    sel.dataset.ambWeekday = amb.weekday;
+    amb.candidates.forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name + (c.start_time ? ' (' + c.start_time + '-' + c.end_time + ')' : '');
+      sel.appendChild(opt);
+    });
+    wrap.appendChild(lbl); wrap.appendChild(sel);
+    row.appendChild(wrap);
+    box.appendChild(row);
+  });
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'btn full'; confirmBtn.type = 'button'; confirmBtn.textContent = 'Use these and continue';
+  confirmBtn.style.marginTop = '6px';
+  confirmBtn.onclick = resolveRotaImportAmbiguities;
+  box.appendChild(confirmBtn);
+}
+
+function resolveRotaImportAmbiguities(){
+  if(!pendingRotaImport) return;
+  const box = document.getElementById('tpl-import-ambiguous');
+  box.querySelectorAll('select[data-amb-key]').forEach(sel => {
+    const key = sel.dataset.ambKey, weekday = parseInt(sel.dataset.ambWeekday, 10);
+    pendingRotaImport.codeToIdByDay[key] = pendingRotaImport.codeToIdByDay[key] || {};
+    pendingRotaImport.codeToIdByDay[key][weekday] = sel.value;
+  });
+  box.innerHTML = '';
+  const pending = pendingRotaImport;
+  pendingRotaImport = null;
+  finishRotaImport(pending);
+}
+
+// Fills the rota-template builder from a resolved import (see
+// importRotaIntoTemplate() / resolveRotaImportAmbiguities()).
+function finishRotaImport(pending){
+  const { parsed, codeToId, codeToIdByDay, unmatched, createdCount } = pending;
+  const statusEl = document.getElementById('tpl-import-status');
+
+  // Columns are Sun→Sat, so start the week on Sunday.
   rtplWeeks = parsed.length;
   rtplPattern = [];
-  parsed.forEach(week => week.forEach(cell => {
-    rtplPattern.push(cell.rest ? '' : (codeToId[cell.code.toUpperCase()] || ''));
+  parsed.forEach(week => week.forEach((cell, dayIdx) => {
+    if(cell.rest){ rtplPattern.push(''); return; }
+    const key = cell.code.toUpperCase();
+    const byDay = codeToIdByDay[key];
+    rtplPattern.push((byDay && byDay[dayIdx]) || codeToId[key] || '');
   }));
   document.getElementById('rtpl-weeks').value = String(rtplWeeks);
   document.getElementById('rtpl-week-start').value = '0';
