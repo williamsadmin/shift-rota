@@ -92,6 +92,13 @@ create policy "Admins can manage any overrides" on public.overrides
 -- day, so the "tell your workplace" reminder can be dismissed once done.
 alter table public.overrides add column if not exists notified_workplace boolean default false;
 
+-- Set when a self-swap was saved as "AR assigned" (the new shift isn't
+-- officially confirmed yet) — shows an "AR - " prefix on the shift in the
+-- calendar, and prompts for a re-check once the shift is within 72 hours,
+-- clearing the flag (and the prefix) once confirmed. See finalizeSwap() /
+-- renderArPendingBanner() / confirmArPending() in index.html.
+alter table public.overrides add column if not exists ar_pending boolean default false;
+
 drop policy if exists "Anyone can view shift_types" on public.shift_types;
 create policy "Anyone can view shift_types" on public.shift_types
   for select to authenticated using (true);
