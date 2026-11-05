@@ -107,6 +107,14 @@
   .day-label{font-size:10px;color:var(--text-dim);text-align:center;text-transform:uppercase;letter-spacing:.05em;}
   .week-marker{grid-column:1/-1;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.1em;color:var(--text-dim);margin-top:8px;text-transform:uppercase;}
   .day-cell select{width:100%;padding:8px 4px;font-size:11px;text-align:center;border-radius:6px;font-weight:600;appearance:none;-webkit-appearance:none;}
+  .shift-search{position:relative;border-radius:6px;}
+  .shift-search input{width:100%;padding:8px 4px;font-size:11px;text-align:center;border-radius:6px;font-weight:600;border:none;background:none;color:inherit;cursor:pointer;}
+  .shift-search input::placeholder{color:var(--text-dim);font-weight:400;}
+  .shift-search-list{position:absolute;top:calc(100% + 3px);left:0;right:0;z-index:40;background:var(--surface);border:1px solid var(--border);border-radius:7px;max-height:200px;overflow-y:auto;box-shadow:0 8px 20px rgba(0,0,0,.3);text-align:left;}
+  .shift-search-opt{padding:7px 9px;font-size:12px;font-weight:600;color:var(--text);cursor:pointer;border-left:4px solid transparent;}
+  .shift-search-opt:hover{background:var(--surface-alt);}
+  .shift-search-empty{color:var(--text-dim);font-weight:400;cursor:default;}
+  .shift-search-empty:hover{background:none;}
   .star-picker{display:flex;gap:4px;}
   .star-picker button{background:none;border:none;font-size:26px;line-height:1;cursor:pointer;color:var(--border);padding:2px;}
   .star-picker button.filled{color:var(--amber);}
@@ -3776,6 +3784,80 @@ function buildWeekReorderControls(w, weeksCount, onMove, onDelete){
   return wrap;
 }
 
+// A searchable replacement for a single-choice day-shift <select> — a plain
+// <select>'s native dropdown has no way to filter a long list of shifts
+// (many templates/blocks) by typing. Used by the personal Setup pattern
+// grid, the admin per-user grid and the rota-template builder. Not used in
+// split-shift mode (the multi-select there already shows its whole list at
+// once since .size is set, so a filter box is less needed, and native
+// multi-select has no easy type-to-filter equivalent to retrofit).
+// options: [{value, label, color}] in display order; blankLabel is the
+// "no shift" entry's text (default '—'); onChange(newValue) fires on pick.
+function createShiftSearchSelect(options, value, onChange, blankLabel){
+  const wrap = document.createElement('div');
+  wrap.className = 'shift-search';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.placeholder = blankLabel || '—';
+  const list = document.createElement('div');
+  list.className = 'shift-search-list';
+  list.style.display = 'none';
+  wrap.appendChild(input);
+  wrap.appendChild(list);
+
+  function findOpt(v){ return options.find(o => o.value === v); }
+  function paint(){
+    const o = findOpt(value);
+    input.value = o ? o.label : '';
+    if(o && o.color){ wrap.style.background = o.color; wrap.style.color = '#203143'; wrap.style.border = 'none'; }
+    else { wrap.style.background = 'var(--surface-alt)'; wrap.style.color = 'var(--text-dim)'; wrap.style.border = '1px solid var(--border)'; }
+  }
+  function choose(v){ value = v; paint(); closeList(); onChange(v); }
+  function renderOptions(filter){
+    const f = filter.trim().toLowerCase();
+    list.innerHTML = '';
+    if(!f){
+      const blank = document.createElement('div');
+      blank.className = 'shift-search-opt';
+      blank.textContent = blankLabel || '— (clear)';
+      blank.onmousedown = (e) => { e.preventDefault(); choose(''); };
+      list.appendChild(blank);
+    }
+    const matches = options.filter(o => !f || o.label.toLowerCase().includes(f));
+    matches.forEach(o => {
+      const row = document.createElement('div');
+      row.className = 'shift-search-opt';
+      row.textContent = o.label;
+      if(o.color) row.style.borderLeftColor = o.color;
+      row.onmousedown = (e) => { e.preventDefault(); choose(o.value); };
+      list.appendChild(row);
+    });
+    if(f && !matches.length){
+      const none = document.createElement('div');
+      none.className = 'shift-search-opt shift-search-empty';
+      none.textContent = 'No matches';
+      list.appendChild(none);
+    }
+  }
+  function openList(){ renderOptions(''); list.style.display = 'block'; }
+  function closeList(){ list.style.display = 'none'; }
+  input.addEventListener('focus', () => { input.select(); openList(); });
+  input.addEventListener('input', () => { renderOptions(input.value); list.style.display = 'block'; });
+  input.addEventListener('blur', () => { setTimeout(() => { closeList(); paint(); }, 150); });
+  input.addEventListener('keydown', (e) => {
+    if(e.key === 'Escape'){ closeList(); paint(); input.blur(); }
+    else if(e.key === 'Enter'){
+      e.preventDefault();
+      const first = list.querySelector('.shift-search-opt:not(.shift-search-empty)');
+      if(first) first.onmousedown(e);
+    }
+  });
+  paint();
+  return wrap;
+}
+
 function changeWeekStartDay(){
   weekStartDay = parseInt(document.getElementById('week-start-day').value, 10);
   recomputeRotaStartFromAnchor();
@@ -4226,27 +4308,11 @@ function renderGrid(){
         });
         cell.appendChild(sel);
       } else {
-        const sel = document.createElement('select');
-        sel.dataset.idx = idx;
-        const blankOpt = document.createElement('option');
-        blankOpt.value = '';
-        blankOpt.textContent = '—';
-        sel.appendChild(blankOpt);
-        shiftTypes.forEach(s=>{
-          const allowed = !s.allowed_days || s.allowed_days[realWeekday] !== false;
-          if(!allowed && s.id !== currentValue) return; // hide disallowed options, but never hide the day's existing assignment
-          const opt = document.createElement('option');
-          opt.value = s.id;
-          opt.textContent = s.name + (allowed ? '' : ' (not allowed this day)');
-          sel.appendChild(opt);
-        });
-        sel.value = currentValue;
-        styleSelect(sel);
-        sel.addEventListener('change', ()=>{
-          pattern[idx] = sel.value;
-          styleSelect(sel);
-        });
-        cell.appendChild(sel);
+        const options = shiftTypes
+          .filter(s => (!s.allowed_days || s.allowed_days[realWeekday] !== false) || s.id === currentValue)
+          .map(s => ({ value: s.id, label: s.name + ((!s.allowed_days || s.allowed_days[realWeekday] !== false) ? '' : ' (not allowed this day)'), color: s.color }));
+        const picker = createShiftSearchSelect(options, currentValue, (v) => { pattern[idx] = v; });
+        cell.appendChild(picker);
       }
       grid.appendChild(cell);
     }
@@ -5198,19 +5264,6 @@ async function finalizeSwap(choice){
   renderCalendarTab();
 }
 
-function styleSelect(sel){
-  const shift = shiftTypes.find(s=>s.id===sel.value);
-  if(shift){
-    sel.style.background = shift.color || '#F2A93B';
-    sel.style.color = '#203143';
-    sel.style.border = 'none';
-  } else {
-    sel.style.background = 'var(--surface-alt)';
-    sel.style.color = 'var(--text-dim)';
-    sel.style.border = '1px solid var(--border)';
-  }
-}
-
 // The date field is an "anchor": the real date of any known day, plus which week
 // of the pattern it falls in. rotaStart (the canonical Day-1/Week-1 date) is
 // derived from it — the day-of-week column is inferred from the date itself.
@@ -5898,27 +5951,15 @@ function renderRtplGrid(){
         });
         cell.appendChild(sel);
       } else {
-        const sel = document.createElement('select');
-        const blank = document.createElement('option'); blank.value=''; blank.textContent='—'; sel.appendChild(blank);
-        templates.forEach(t=>{
-          const allowed = !t.allowed_days || t.allowed_days[realWeekday] !== false;
-          if(!allowed && t.id !== current) return; // hide disallowed options, but never hide the day's existing assignment
-          const opt=document.createElement('option'); opt.value=t.id; opt.textContent=t.name + (allowed ? '' : ' (not allowed this day)'); sel.appendChild(opt);
-        });
-        sel.value = current;
-        styleRtplSelect(sel);
-        sel.addEventListener('change', ()=>{ rtplPattern[idx]=sel.value; styleRtplSelect(sel); });
-        cell.appendChild(sel);
+        const options = templates
+          .filter(t => (!t.allowed_days || t.allowed_days[realWeekday] !== false) || t.id === current)
+          .map(t => ({ value: t.id, label: t.name + ((!t.allowed_days || t.allowed_days[realWeekday] !== false) ? '' : ' (not allowed this day)'), color: t.color }));
+        const picker = createShiftSearchSelect(options, current, (v) => { rtplPattern[idx] = v; });
+        cell.appendChild(picker);
       }
       grid.appendChild(cell);
     }
   }
-}
-
-function styleRtplSelect(sel){
-  const t = templates.find(t=>t.id===sel.value);
-  if(t){ sel.style.background=t.color||'#43C6AC'; sel.style.color='#203143'; sel.style.border='none'; }
-  else { sel.style.background='var(--surface-alt)'; sel.style.color='var(--text-dim)'; sel.style.border='1px solid var(--border)'; }
 }
 
 async function saveRotaTemplate(){
@@ -6977,34 +7018,23 @@ function renderAdminRotaGrid(container){
         });
         cell.appendChild(sel);
       } else {
-        const sel=document.createElement('select');
-        const blank=document.createElement('option'); blank.value=''; blank.textContent='—'; sel.appendChild(blank);
-        ar.shiftTypes.forEach(s=>{
-          const allowed=!s.allowed_days||s.allowed_days[realWeekday]!==false;
-          if(!allowed&&s.id!==current) return;
-          const opt=document.createElement('option'); opt.value=s.id; opt.textContent=s.name+(allowed?'':' (!)'); sel.appendChild(opt);
-        });
+        const options = ar.shiftTypes
+          .filter(s => (!s.allowed_days || s.allowed_days[realWeekday] !== false) || s.id === current)
+          .map(s => ({ value: s.id, label: s.name + ((!s.allowed_days || s.allowed_days[realWeekday] !== false) ? '' : ' (!)'), color: s.color }));
         // Offer any shared shift template the user hasn't got yet — picking one adds it to them
         const toOffer = templates.filter(t => !ar.shiftTypes.some(s => s.source_template_id === t.id)
           && (!t.allowed_days || t.allowed_days[realWeekday] !== false));
-        if(toOffer.length){
-          const og=document.createElement('optgroup'); og.label='Add from templates';
-          toOffer.forEach(t=>{ const opt=document.createElement('option'); opt.value='tpl:'+t.id; opt.textContent=t.name+' (add)'; og.appendChild(opt); });
-          sel.appendChild(og);
-        }
-        sel.value=current;
-        const styleSel=()=>{ const sh=ar.shiftTypes.find(s=>s.id===sel.value); if(sh){sel.style.background=sh.color||'#F2A93B';sel.style.color='#203143';sel.style.border='none';}else{sel.style.background='var(--surface-alt)';sel.style.color='var(--text-dim)';sel.style.border='1px solid var(--border)';} };
-        styleSel();
-        sel.addEventListener('change', async ()=>{
-          if(sel.value.startsWith('tpl:')){
-            const newId = await adminEnsureShiftCopy(sel.value.slice(4));
+        toOffer.forEach(t => options.push({ value: 'tpl:' + t.id, label: t.name + ' (add)', color: t.color }));
+        const picker = createShiftSearchSelect(options, current, async (v) => {
+          if(v.startsWith('tpl:')){
+            const newId = await adminEnsureShiftCopy(v.slice(4));
             ar.pattern[idx] = newId || '';
             renderAdminRotaGrid(container); // re-render so the new shift shows in every dropdown
             return;
           }
-          ar.pattern[idx]=sel.value; styleSel();
+          ar.pattern[idx] = v;
         });
-        cell.appendChild(sel);
+        cell.appendChild(picker);
       }
       grid.appendChild(cell);
     }
