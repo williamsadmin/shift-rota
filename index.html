@@ -292,6 +292,12 @@
         <div id="tentative-list"></div>
       </section>
 
+      <section id="ar-pending-banner" style="display:none;">
+        <p class="sec-title" style="color:var(--amber);">Confirm — shift starting soon</p>
+        <p class="help" style="margin-top:0;">An "AR assigned" change is due within 72 hours — check it's still accurate.</p>
+        <div id="ar-pending-list"></div>
+      </section>
+
       <section id="overtime-banner" style="display:none;">
         <p class="sec-title" style="color:var(--amber);">Tell your workplace about this overtime</p>
         <p class="help" style="margin-top:0;">These are within 3 weeks now — including any you flagged further ahead than that. Let your workplace know, then mark it as told.</p>
@@ -327,7 +333,7 @@
             <div id="swap-confirm-box" style="display:none;margin-top:12px;">
               <p class="help" style="margin-top:0;font-weight:600;color:var(--text);">Do you need to inform your workplace of this change?</p>
               <div class="row">
-                <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('no')">No</button>
+                <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('ar')">AR assigned</button>
                 <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('already')">Already done</button>
                 <button class="btn secondary" style="flex:1;" onclick="finalizeSwap('need_to')">I need to</button>
               </div>
@@ -1703,7 +1709,8 @@ function renderFriendCalendar(){
   }
 }
 
-function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix, applyEarlyStart){
+function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix, applyEarlyStart, namePrefix){
+  namePrefix = namePrefix || '';
   const dateObj = new Date(dateStr + 'T00:00:00');
   const dateLabel = dateObj.toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long', year:'numeric'});
   let html = '<p style="margin:0 0 8px;font-weight:600;color:var(--text);">' + ownerPrefix + dateLabel + '</p>';
@@ -1712,7 +1719,7 @@ function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix, applyEarlySta
   } else if(shifts && shifts.length){
     shifts.forEach((shift, i)=>{
       if(i > 0) html += '<hr style="border:none;border-top:1px solid var(--border);margin:10px 0;">';
-      html += '<p class="help" style="margin:0 0 4px;"><strong style="color:var(--text);">' + escapeHtml(shift.name) + '</strong>' + shiftDisplayTimeLabel(shift, applyEarlyStart) + '</p>';
+      html += '<p class="help" style="margin:0 0 4px;"><strong style="color:var(--text);">' + escapeHtml((i === 0 ? namePrefix : '') + shift.name) + '</strong>' + shiftDisplayTimeLabel(shift, applyEarlyStart) + '</p>';
       if(shift.paid_hours) html += '<p class="help" style="margin:0 0 4px;">Paid hours: ' + escapeHtml(shift.paid_hours) + '</p>';
       // Clock on is always the very first line inside the description box
       // (not a separate paragraph above it) — bolded so it stands out from
@@ -1751,7 +1758,7 @@ function showDayDetail(dateStr){
     + (hasOt ? 'Cancel overtime request' : '💪 Request overtime this day') + '</button>';
   const swapBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="startSwapFromDay(\'' + dateStr + '\')">⇄ Swap this shift</button>';
   const upcomingBtn = '<button class="btn secondary full" style="margin-top:10px;" onclick="showUpcomingDays(\'' + dateStr + '\')">📅 Show next 7 days</button>';
-  panel.innerHTML = buildDayDetailHTML(dateStr, shifts, shiftId, 'My — ', true)
+  panel.innerHTML = buildDayDetailHTML(dateStr, shifts, shiftId, 'My — ', true, dayNamePrefix(ov))
     + (hasOt ? '<p class="help" style="margin:8px 0 0;color:var(--amber);">Overtime requested for this day.</p>' : '')
     + revertBtn + swapBtn + otBtn + upcomingBtn +
     '<button class="btn secondary full" style="margin-top:10px;" onclick="closeDayDetail()">Close</button>';
@@ -1771,12 +1778,13 @@ function buildUpcomingDaysHTML(startDateStr){
     const key = dateKeyLocal(cursor);
     const shiftId = effectiveShift(key);
     const shifts = resolveDayShifts(shiftId, shiftTypes);
+    const ov = allOverrides.find(o => o.override_date === key);
     const dateLabel = cursor.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
     let line;
     if(shiftId === '__holiday__'){
       line = '<span class="cal-shift-name">Holiday</span>';
     } else if(shifts.length){
-      line = '<span class="cal-shift-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftTimeLabel(shifts));
+      line = '<span class="cal-shift-name">' + escapeHtml(dayNamePrefix(ov) + multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftTimeLabel(shifts));
     } else {
       line = '<span class="cal-shift-name">Rest day</span>';
     }
@@ -5017,6 +5025,76 @@ async function confirmTentative(id){
   renderCalendarTab();
 }
 
+// The "AR - " / "TBC - " prefix shown on a day's shift name in the calendar
+// while a swap chosen via "AR assigned" (ar_pending) / "I need to"
+// (tentative) hasn't been confirmed yet — see finalizeSwap(), confirmTentative()
+// and confirmArPending(). Takes the override row itself (not a date lookup)
+// so friend/compare views, which show someone else's day, never pick up my
+// own override by date — only a caller showing *my* own day passes it.
+function dayNamePrefix(ov){
+  if(!ov) return '';
+  if(ov.ar_pending) return 'AR - ';
+  if(ov.tentative) return 'TBC - ';
+  return '';
+}
+
+// A shift's start as a real Date on a given day — used to tell how close an
+// "AR assigned" change is to actually starting. All-day/flexible shifts (no
+// start_time) are treated as starting at midnight, so they're flagged as
+// soon as their date is within range rather than never.
+function shiftStartDateTime(dateStr, shift){
+  const d = new Date(dateStr + 'T00:00:00');
+  if(shift && !shift.all_day && shift.start_time){
+    const [h, m] = shift.start_time.split(':').map(Number);
+    d.setHours(h, m, 0, 0);
+  }
+  return d;
+}
+
+// Surfaces "AR assigned" changes (see finalizeSwap()) once their shift is
+// within 72 hours, asking the user to confirm it's still accurate — doing so
+// clears ar_pending, which also removes the "AR - " prefix in the calendar.
+function renderArPendingBanner(){
+  const banner = document.getElementById('ar-pending-banner');
+  const list = document.getElementById('ar-pending-list');
+  if(!banner || !list) return;
+  const limit = new Date(Date.now() + 72*60*60*1000);
+  const due = allOverrides
+    .filter(o => o.ar_pending)
+    .filter(o => shiftStartDateTime(o.override_date, shiftTypes.find(s => s.id === o.value)) <= limit)
+    .sort((a,b)=> a.override_date < b.override_date ? -1 : 1);
+  if(due.length === 0){
+    banner.style.display = 'none';
+    return;
+  }
+  banner.style.display = 'block';
+  list.innerHTML = '';
+  due.forEach(o=>{
+    const div = document.createElement('div');
+    div.className = 'off-item';
+    const dateObj = new Date(o.override_date + 'T00:00:00');
+    const formatted = dateObj.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
+    const shift = shiftTypes.find(s => s.id === o.value);
+    const shiftLabel = o.value === '' ? 'Rest day'
+      : o.value === '__holiday__' ? 'Holiday'
+      : (shift ? shift.name + shiftTimeLabel(shift) : 'shift');
+    div.innerHTML = '<span>' + escapeHtml(formatted) + ' — <strong style="color:var(--text);">AR - ' + escapeHtml(shiftLabel) + '</strong></span>';
+    const btn = document.createElement('button');
+    btn.textContent = 'Still accurate';
+    btn.style.color = 'var(--teal)';
+    btn.onclick = ()=>confirmArPending(o.id);
+    div.appendChild(btn);
+    list.appendChild(div);
+  });
+}
+
+async function confirmArPending(id){
+  await sb.from('overrides').update({ ar_pending: false }).eq('id', id);
+  allOverrides = allOverrides.map(o => o.id === id ? { ...o, ar_pending: false } : o);
+  renderArPendingBanner();
+  renderCalendarTab();
+}
+
 function getCalendarEndDate(today){
   const rangeVal = document.getElementById('calendar-range').value;
   const end = new Date(today);
@@ -5049,6 +5127,7 @@ function rangeLabel(){
 function renderCalendarTab(){
   renderUpcomingBanner();
   renderTentativeBanner();
+  renderArPendingBanner();
   renderOvertimeBanner();
   populateSwapToSelect();
   const listEl = document.getElementById('calendar-list');
@@ -5105,7 +5184,7 @@ function renderCalendarTab(){
         label += ' — <span class="cal-shift-name">Holiday</span>';
       } else if(shifts.length){
         swatch = shifts.map(s => '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + (s.color||'#F2A93B') + ';margin-right:4px;"></span>').join('');
-        label += ' — <span class="cal-shift-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true));
+        label += ' — <span class="cal-shift-name">' + escapeHtml(dayNamePrefix(ov) + multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true));
         if(payRates.enabled) label += ' (£' + dayPay.toFixed(2) + ')';
       } else {
         label += ' — <span class="cal-shift-name">RD</span>';
@@ -5142,7 +5221,7 @@ function renderCalendarTab(){
       // A long shift name is truncated with an ellipsis in the cell itself
       // (.cal-grid-name's CSS) — the full name shows on hover here, and in
       // full detail (with times/description) when the cell is tapped.
-      cell.title = cursor.toLocaleDateString() + (shifts.length ? ' — ' + multiShiftNameLabel(shifts) : '');
+      cell.title = cursor.toLocaleDateString() + (shifts.length ? ' — ' + dayNamePrefix(ov) + multiShiftNameLabel(shifts) : '');
       cell.style.cursor = 'pointer';
       cell.onclick = ()=>showDayDetail(key);
       if(isBankHoliday) cell.style.outline = '2px solid var(--amber)';
@@ -5155,7 +5234,7 @@ function renderCalendarTab(){
       } else if(shifts.length){
         cell.style.background = multiShiftBackground(shifts);
         cell.style.color = '#203143';
-        inner += '<span class="cal-grid-name">' + escapeHtml(multiShiftNameLabel(shifts)) + '</span><span class="pay-line">' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true)) + (payRates.enabled ? ' £'+dayPay.toFixed(2) : '') + '</span>';
+        inner += '<span class="cal-grid-name">' + escapeHtml(dayNamePrefix(ov) + multiShiftNameLabel(shifts)) + '</span><span class="pay-line">' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true)) + (payRates.enabled ? ' £'+dayPay.toFixed(2) : '') + '</span>';
       } else {
         inner += '<span class="cal-grid-name">RD</span>';
       }
@@ -5333,14 +5412,17 @@ async function finalizeSwap(choice){
   if(!pendingSwap) return;
   const statusEl = document.getElementById('swap-status');
   const tentative = choice === 'need_to';
-  const row = { user_id: effectiveUserId(), override_date: pendingSwap.date, value: pendingSwap.newValue, source: 'self_swap', tentative };
+  const arPending = choice === 'ar';
+  const row = { user_id: effectiveUserId(), override_date: pendingSwap.date, value: pendingSwap.newValue, source: 'self_swap', tentative, ar_pending: arPending };
   statusEl.style.color = 'var(--text-dim)';
   statusEl.textContent = 'Saving…';
   const { error } = await sb.from('overrides').upsert([row], { onConflict: 'user_id,override_date' });
   document.getElementById('swap-confirm-box').style.display = 'none';
   if(error){
     statusEl.style.color = 'var(--danger)';
-    statusEl.textContent = error.message;
+    statusEl.textContent = /column|ar_pending/i.test(error.message)
+      ? 'Needs a one-off database update — run the ar_pending column change from db-setup.sql.'
+      : error.message;
     pendingSwap = null;
     return;
   }
@@ -5352,7 +5434,9 @@ async function finalizeSwap(choice){
     .toLocaleDateString(undefined, { weekday:'short', day:'numeric', month:'short' });
   statusEl.style.color = 'var(--teal)';
   statusEl.textContent = dateLabel + ' changed to ' + toLabel
-    + (tentative ? ' — flagged as needing workplace confirmation.' : '.');
+    + (tentative ? ' — flagged as needing workplace confirmation.'
+      : arPending ? ' — flagged "AR - " until you confirm it nearer the shift.'
+      : '.');
   document.getElementById('swap-from').value = '';
   document.getElementById('swap-to-shift').value = '';
   const searchEl = document.getElementById('swap-shift-search');
