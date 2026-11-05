@@ -2313,8 +2313,19 @@ async function recompileDutyBoards(){
 /* ---------- PDF duty sheet import ---------- */
 
 const PDF_DAY_MAP = { SUN:0, MON:1, TUE:2, WED:3, THU:4, FRI:5, SAT:6 };
+// Matches both abbreviated (SAT) and full (SATURDAY) day names — some duty
+// sheets spell out Saturday/Sunday in full while abbreviating weekdays.
+const PDF_DAY_TOKEN = '(?:SUN(?:DAY)?|MON(?:DAY)?|TUE(?:SDAY)?|WED(?:NESDAY)?|THU(?:RSDAY)?|FRI(?:DAY)?|SAT(?:URDAY)?)';
 // Lines that are structural/header noise and must never be mistaken for a stop+time row.
 const PDF_LEG_SKIP_RE = /^(Service\b|Revenue No\.|Journey No\.|Direction\b|Destination Code:|Bus Board No\.|Show NOT IN SERVICE|Sign ON|Commencing|Printed on|Page \d|Days:|ALWAYS BOARD)/i;
+// Marks the start of one duty sheet: "<days> Duty Number: <name>" — a PDF
+// covering a duty that runs different days on different weekdays (e.g. a
+// "MON,TUE,WED,THU" section and a separate "FRI" section under the same
+// duty number) repeats this header once per day-group, each starting its
+// own complete, self-contained sheet. splitDutyPdfSections() below uses it
+// to pull those apart into separate shifts instead of parsing the whole
+// file as one combined duty.
+const PDF_DUTY_HEADER_RE = new RegExp('\\b' + PDF_DAY_TOKEN + '(?:,' + PDF_DAY_TOKEN + ')*\\s+Duty Number:', 'gi');
 
 function pdfMilToHHMM(raw){
   const s = raw.padStart(4,'0');
@@ -2340,9 +2351,11 @@ function parseDutyPdfText(text){
   if(dutyM) name = dutyM[1]; else warnings.push('Could not find a duty number — check the name field.');
 
   let allowedDays = [false,false,false,false,false,false,false];
-  const daysM = fullText.match(/\b((?:SUN|MON|TUE|WED|THU|FRI|SAT)(?:,(?:SUN|MON|TUE|WED|THU|FRI|SAT))*)\s+Duty Number:/i);
+  const daysM = fullText.match(new RegExp('\\b(' + PDF_DAY_TOKEN + '(?:,' + PDF_DAY_TOKEN + ')*)\\s+Duty Number:', 'i'));
   if(daysM){
-    daysM[1].toUpperCase().split(',').forEach(d => { if(PDF_DAY_MAP[d] !== undefined) allowedDays[PDF_DAY_MAP[d]] = true; });
+    // Each token may be abbreviated (SAT) or spelled out (SATURDAY) — the
+    // first 3 letters are enough to key into PDF_DAY_MAP either way.
+    daysM[1].toUpperCase().split(',').forEach(d => { const key = d.slice(0,3); if(PDF_DAY_MAP[key] !== undefined) allowedDays[PDF_DAY_MAP[key]] = true; });
   } else {
     warnings.push('Could not find the days pattern — none selected, set manually.');
   }
@@ -2451,6 +2464,41 @@ function parseDutyPdfText(text){
   return { name, allowedDays, start, end, paidHours, legs, warnings, sourceText: fullText };
 }
 
+// Splits one PDF's extracted text into one chunk per duty-sheet header match
+// (see PDF_DUTY_HEADER_RE) — a file with two "<days> Duty Number: X" headers
+// (same duty number, different day-groups) becomes two chunks, each parsed
+// as its own duty by parseDutyPdfText() rather than merged into one. A file
+// with 0 or 1 header is returned unsplit, exactly as before.
+function splitDutyPdfSections(fullText){
+  const starts = [];
+  PDF_DUTY_HEADER_RE.lastIndex = 0;
+  let m;
+  while((m = PDF_DUTY_HEADER_RE.exec(fullText))){
+    starts.push(m.index);
+  }
+  if(starts.length <= 1) return [fullText];
+  return starts.map((start, i) => fullText.slice(start, i + 1 < starts.length ? starts[i+1] : fullText.length));
+}
+
+// A short "Mon-Thu" / "Fri" style label from an allowedDays boolean array,
+// used to tell apart same-duty-number sections split out by
+// splitDutyPdfSections() (e.g. "E01 (Mon-Thu)" vs "E01 (Fri)"). Collapses
+// consecutive selected days (Sun..Sat, no week-wrap) into ranges.
+function dutyDayGroupLabel(allowedDays){
+  const labels = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  const days = allowedDays.map((v,i) => v ? i : -1).filter(i => i >= 0);
+  if(days.length === 0) return '';
+  const runs = [];
+  let runStart = days[0], prev = days[0];
+  for(let i = 1; i <= days.length; i++){
+    const d = days[i];
+    if(d === prev + 1){ prev = d; continue; }
+    runs.push([runStart, prev]);
+    if(i < days.length){ runStart = d; prev = d; }
+  }
+  return runs.map(([a,b]) => a === b ? labels[a] : labels[a] + '-' + labels[b]).join(',');
+}
+
 async function extractPdfText(file){
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
@@ -2490,14 +2538,25 @@ async function parsePdfImportFiles(){
   for(const file of files){
     try{
       const text = await extractPdfText(file);
-      const duty = parseDutyPdfText(text);
-      pdfImportParsed.push({ duty, include: true, sourceFile: file.name });
+      const sections = splitDutyPdfSections(text);
+      sections.forEach((sectionText, idx) => {
+        const duty = parseDutyPdfText(sectionText);
+        // A file split into several day-group sections shares one duty
+        // number across them (e.g. "E01" Mon-Thu and "E01" Fri) — tag each
+        // with its own days so they're distinguishable as separate shifts.
+        if(sections.length > 1 && duty.name){
+          const label = dutyDayGroupLabel(duty.allowedDays);
+          if(label) duty.name += ' (' + label + ')';
+        }
+        const sourceFile = sections.length > 1 ? file.name + ' — section ' + (idx + 1) : file.name;
+        pdfImportParsed.push({ duty, include: true, sourceFile });
+      });
     } catch(err){
       pdfImportParsed.push({ duty: null, include: false, sourceFile: file.name, error: err.message || String(err) });
     }
   }
   statusEl.style.color = 'var(--teal)';
-  statusEl.textContent = 'Parsed ' + pdfImportParsed.length + ' file(s) — review below, then Import all.';
+  statusEl.textContent = 'Parsed ' + pdfImportParsed.length + ' duty/duties from ' + files.length + ' file(s) — review below, then Import all.';
   renderPdfImportPreview();
 }
 
