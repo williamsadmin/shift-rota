@@ -640,8 +640,7 @@
           </div>
           <p class="help" style="margin:0 0 8px;">Tap a day below to use it as the start date instead.</p>
           <div id="rtpl-apply-preview-grid" class="grid"></div>
-          <button class="btn full" id="rtpl-apply-schedule-btn" style="margin-top:8px;" onclick="confirmApplyRotaTemplate('schedule')">Start this rota from that date (keep my current rota before)</button>
-          <button class="btn secondary full" style="margin-top:8px;" onclick="confirmApplyRotaTemplate('replace')">Replace my whole rota now instead</button>
+          <button class="btn full" id="rtpl-apply-schedule-btn" style="margin-top:8px;" onclick="confirmApplyRotaTemplate()">Start this rota from that date</button>
           <button class="btn secondary full" style="margin-top:8px;" onclick="cancelApplyRotaTemplate()">Cancel</button>
           <div class="status" id="rtpl-apply-status"></div>
         </div>
@@ -3280,6 +3279,19 @@ async function loadAccountData(){
     pattern = Array(35).fill('');
   }
   baseRota = { rota_start: rotaStart, weeks: weeks, week_start_day: weekStartDay, pattern: [...pattern] };
+  // A scheduled rota change (see confirmApplyRotaTemplate()) whose start
+  // date has since arrived becomes the base rota from here on, so "the
+  // original rota" view catches up instead of staying on the pre-change
+  // pattern forever.
+  if(promoteDueRotaSchedule()){
+    rotaStart = baseRota.rota_start; weeks = baseRota.weeks; weekStartDay = baseRota.week_start_day;
+    pattern = [...baseRota.pattern];
+    sb.from('rota_settings').upsert({
+      user_id: effectiveUserId(), rota_start: baseRota.rota_start, weeks: baseRota.weeks,
+      week_start_day: baseRota.week_start_day, original_pattern: baseRota.pattern,
+      schedule: rotaSchedule, updated_at: new Date().toISOString()
+    });
+  }
   document.getElementById('rota-start').value = rotaStart;
   document.getElementById('weeks-select').value = String(weeks);
   document.getElementById('week-start-day').value = String(weekStartDay);
@@ -4917,6 +4929,27 @@ function resolveRotaForDate(baseStart, baseWeeks, basePattern, schedule, dateStr
   return v;
 }
 
+// Folds any scheduled rota change (see addScheduledRotaChange() /
+// confirmApplyRotaTemplate()) whose effective_from has now arrived into
+// baseRota, and drops it (and any older ones also now in effect) from
+// rotaSchedule. Without this, "the original rota" (the Setup/Rota tab's
+// default view, which always shows baseRota while editingRotaVersion is
+// null) would keep showing the pre-change pattern forever once its start
+// date passed, even though My Calendar — which resolves day-by-day via
+// shiftFromRotaVersions() — already reflects it correctly. Returns true if
+// it changed anything, so callers know to re-sync the editor and persist.
+function promoteDueRotaSchedule(){
+  if(!Array.isArray(rotaSchedule) || !rotaSchedule.length) return false;
+  const todayKey = dateKeyLocal(new Date());
+  const due = rotaSchedule.filter(s => s && s.effective_from && s.effective_from <= todayKey);
+  if(!due.length) return false;
+  due.sort((a,b) => a.effective_from < b.effective_from ? -1 : 1);
+  const winner = due[due.length - 1];
+  baseRota = { rota_start: winner.rota_start, weeks: winner.weeks, week_start_day: winner.week_start_day, pattern: winner.pattern };
+  rotaSchedule = rotaSchedule.filter(s => !(s && s.effective_from && s.effective_from <= todayKey));
+  return true;
+}
+
 function shiftFromRotaVersions(baseStart, baseWeeks, basePattern, schedule, dateStr){
   const v = resolveRotaForDate(baseStart, baseWeeks, basePattern, schedule, dateStr);
   if(!v.rota_start) return '';
@@ -5593,7 +5626,11 @@ async function persistRota(statusEl, successMsg){
     original_pattern: baseRota.pattern,
     updated_at: new Date().toISOString()
   };
-  if(rotaSchedule.length) payload.schedule = rotaSchedule;
+  // Always included (even empty) so a schedule that's been fully promoted
+  // into the base (see promoteDueRotaSchedule()) actually clears in the DB,
+  // instead of the old array lingering because an upsert never touches a
+  // column it wasn't given.
+  payload.schedule = rotaSchedule;
   const { error } = await sb.from('rota_settings').upsert(payload);
   if(error){
     statusEl.style.color = 'var(--danger)';
@@ -6351,7 +6388,7 @@ function setRtplApplyAnchorFromPreview(dateKey, weekNum){
   onRtplApplyAnchorChange();
 }
 
-async function confirmApplyRotaTemplate(mode){
+async function confirmApplyRotaTemplate(){
   const rtpl = pendingRotaTemplateApply;
   if(!rtpl) return;
   const statusEl = document.getElementById('rtpl-apply-status');
@@ -6359,12 +6396,8 @@ async function confirmApplyRotaTemplate(mode){
   if(!anchorDate){ statusEl.style.color='var(--danger)'; statusEl.textContent='Pick the date to start from.'; return; }
   const anchorWeek = parseInt(document.getElementById('rtpl-apply-anchor-week').value, 10) || 1;
 
-  if(mode === 'schedule'){
-    const todayKey = dateKeyLocal(new Date());
-    if(anchorDate <= todayKey && !confirm('That start date isn\'t in the future — days from then will use the new rota. Continue?')) return;
-  } else if(!confirm('Replace your whole rota with "' + rtpl.name + '" now? Your existing shift types are kept, any missing template shifts are added to your collection, and booked holidays/swaps stay.')){
-    return;
-  }
+  const todayKey = dateKeyLocal(new Date());
+  if(anchorDate <= todayKey && !confirm('That start date isn\'t in the future — days from then will use the new rota. Continue?')) return;
 
   const ld = rtpl.legs_data || {};
   const newWeeks = ld.weeks || 5;
@@ -6394,18 +6427,25 @@ async function confirmApplyRotaTemplate(mode){
   const newPattern = resizePatternArray(tplPattern.map(v => joinShiftIds(splitShiftIds(v).map(id => idMap[id] || '').filter(Boolean))), newWeeks);
   const newRotaStart = computeRotaStartFromAnchor(anchorDate, anchorWeek, wsd);
 
-  if(mode === 'replace'){
+  // Always scoped to "from this date onward" — days before it keep whatever
+  // rota was already in effect, and any swaps/holidays (overrides, which
+  // this never touches) stay exactly as they were. If that date is today or
+  // earlier, promoteDueRotaSchedule() immediately folds it into the base
+  // rota below, so both My Calendar and the Setup/Rota tab's default view
+  // agree on it straight away rather than only the date-aware calendar
+  // reflecting it until the date naturally passes.
+  const seed = { effective_from: anchorDate, rota_start: newRotaStart, weeks: newWeeks, week_start_day: wsd, pattern: newPattern };
+  rotaSchedule = rotaSchedule.filter(s => s.effective_from !== anchorDate).concat([seed]);
+  const promoted = promoteDueRotaSchedule();
+  if(promoted){
     editingRotaVersion = null;
-    baseRota = { rota_start: newRotaStart, weeks: newWeeks, week_start_day: wsd, pattern: newPattern };
     loadRotaIntoEditor(baseRota);
   } else {
-    const seed = { effective_from: anchorDate, rota_start: newRotaStart, weeks: newWeeks, week_start_day: wsd, pattern: newPattern };
-    rotaSchedule = rotaSchedule.filter(s => s.effective_from !== anchorDate).concat([seed]);
     editingRotaVersion = anchorDate;
     loadRotaIntoEditor(seed);
   }
   renderRotaVersionSelect();
-  const ok = await persistRota(statusEl, mode === 'replace' ? 'Rota replaced.' : 'Saved — new rota starts ' + fmtDateLabel(anchorDate) + '.');
+  const ok = await persistRota(statusEl, 'Saved — rota ' + (promoted ? 'updated' : 'starts ' + fmtDateLabel(anchorDate)) + '.');
   if(ok){
     renderShiftTypeList();
     cancelApplyRotaTemplate();
