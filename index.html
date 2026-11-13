@@ -261,6 +261,13 @@
     <button class="btn secondary" style="padding:6px 12px;font-size:12px;background:#1a1a1a;color:#fff;border:none;" onclick="exitImpersonation()">Exit</button>
   </div>
 
+  <!-- Admin-posted banner(s) for a date range (see loadAnnouncements() /
+       renderAnnouncementBanner()) — tab-agnostic, same reason as the
+       impersonation banner above. -->
+  <div id="announcement-banner" style="display:none;max-width:600px;margin:10px auto;padding:10px 14px;border-radius:7px;background:var(--surface-alt);border:1px solid var(--amber);color:var(--text);">
+    <div id="announcement-banner-list"></div>
+  </div>
+
   <!-- Lives outside the tab-panel system (not inside .wrap) since it's
        opened both from the Templates tab (viewing your own templates) and
        the Admin tab (an admin viewing a template while setting up a user's
@@ -1104,6 +1111,45 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="status" id="admin-load-status"></div>
         <div id="admin-account-list" style="margin-top:12px;"></div>
       </section>
+
+      <section>
+        <p class="sec-title">Bulk calendar changes</p>
+        <p class="help" style="margin-top:0;">Change a date — or a range of dates — for every account in one company at once, e.g. give everyone Christmas Day off, or run a Saturday service over the festive period. This only writes a calendar override per account; it never touches anyone's rota or shift types.</p>
+        <div class="row">
+          <div><label>Company</label><select id="admin-bulk-company"><option value="">— Choose a company —</option></select></div>
+        </div>
+        <div class="row">
+          <div><label>From date</label><input type="date" id="admin-bulk-start"></div>
+          <div><label>To date (optional — same as "From" if left blank)</label><input type="date" id="admin-bulk-end"></div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Set those days to</label>
+            <select id="admin-bulk-action">
+              <option value="rest">A rest day (day off)</option>
+              <option value="saturday">Each person's own Saturday shift (run a Saturday service)</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn full" type="button" onclick="applyBulkCompanyOverride()">Apply to company</button>
+        <div class="status" id="admin-bulk-status"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Announcements</p>
+        <p class="help" style="margin-top:0;">Posts a banner at the top of the app for the date range below — e.g. explaining the bulk calendar change above.</p>
+        <div class="row">
+          <div><label>Company</label><select id="ann-company"><option value="">Everyone</option></select></div>
+        </div>
+        <div class="row">
+          <div><label>From date</label><input type="date" id="ann-start"></div>
+          <div><label>To date</label><input type="date" id="ann-end"></div>
+        </div>
+        <div><label>Message</label><textarea id="ann-message" placeholder="e.g. Christmas Day is a day off for everyone. 24 Dec - 1 Jan runs a Saturday service." style="min-height:70px;"></textarea></div>
+        <button class="btn full" type="button" onclick="createAnnouncement()">Post announcement</button>
+        <div class="status" id="ann-status"></div>
+        <div id="admin-announcements-list" style="margin-top:12px;"></div>
+      </section>
     </div>
   </div>
 </div>
@@ -1179,6 +1225,7 @@ let friendData = { rota: null, overrides: [], shiftTypes: [] };
 let selectedFriend2 = null; // optional third person in the compare view
 let friendData2 = { rota: null, overrides: [], shiftTypes: [] };
 let allAdminProfiles = []; // loaded once per admin session for account management
+let allAnnouncements = []; // loaded for every signed-in user, not just admins — see loadAnnouncements()
 let adminEditRota = null; // { userId, weeks, weekStartDay, rotaStart, pattern, shiftTypes }
 let adminEditCal = null;  // { userId, rota, overrides, shiftTypes } — editing a user's My Calendar
 // Rota template builder state (admin only)
@@ -3316,6 +3363,7 @@ async function loadAccountData(){
   loadPeopleTab();
   await loadRatings();
   renderRatingsTab();
+  await loadAnnouncements();
   if(isAdmin) loadAdminTab();
 }
 
@@ -4929,6 +4977,24 @@ function resolveRotaForDate(baseStart, baseWeeks, basePattern, schedule, dateStr
   return v;
 }
 
+// Given a resolved rota version's rota_start/weeks and a real date within
+// it, finds the pattern index of the Saturday in that SAME pattern week —
+// used by the admin's "run a Saturday service" bulk holiday-period action
+// (applyBulkCompanyOverride()). Only the column-within-week matters (no
+// need to locate an actual calendar Saturday): a pattern cycle is always a
+// whole number of weeks, so every week in it repeats the same weekday in
+// each column position as rota_start's own weekday.
+function patternIndexAndSaturday(rotaStartStr, weeksN, dateStr){
+  const start = new Date(rotaStartStr + 'T00:00:00');
+  const d = new Date(dateStr + 'T00:00:00');
+  const len = (weeksN || 1) * 7;
+  let idx = Math.floor((d - start) / 86400000) % len;
+  if(idx < 0) idx += len;
+  const col = idx % 7;
+  const satCol = ((6 - start.getDay()) % 7 + 7) % 7;
+  return { idx, satIdx: idx - col + satCol };
+}
+
 // Folds any scheduled rota change (see addScheduledRotaChange() /
 // confirmApplyRotaTemplate()) whose effective_from has now arrived into
 // baseRota, and drops it (and any older ones also now in effect) from
@@ -6519,6 +6585,163 @@ async function loadAdminTab(){
   renderAdminAccountList();
   renderAdminBlocksSection();
   renderAdminBustimesMap();
+  populateAdminCompanySelects();
+  renderAdminAnnouncementsList();
+}
+
+// Fills the company <select>s for the bulk calendar-change and announcement
+// tools from whatever companies currently exist among all accounts.
+function populateAdminCompanySelects(){
+  const companies = [...new Set(allAdminProfiles.map(p => p.company).filter(Boolean))].sort();
+  const bulkSel = document.getElementById('admin-bulk-company');
+  if(bulkSel){
+    bulkSel.innerHTML = '<option value="">— Choose a company —</option>'
+      + companies.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
+  }
+  const annSel = document.getElementById('ann-company');
+  if(annSel){
+    annSel.innerHTML = '<option value="">Everyone</option>'
+      + companies.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
+  }
+}
+
+// Admin-only: sets one date (or a range) to the same thing for every account
+// in a company at once — either a rest day, or (for a holiday "Saturday
+// service") whatever shift that person's own rota already has on the
+// Saturday of that pattern week. Writes straight to `overrides`, so each
+// account's own rota/shift types are completely untouched — undoing it is
+// just reverting or deleting those override rows, same as any other swap.
+async function applyBulkCompanyOverride(){
+  const statusEl = document.getElementById('admin-bulk-status');
+  const fail = (msg) => { statusEl.style.color = 'var(--danger)'; statusEl.textContent = msg; };
+  const company = document.getElementById('admin-bulk-company').value;
+  const startDate = document.getElementById('admin-bulk-start').value;
+  const endDate = document.getElementById('admin-bulk-end').value || startDate;
+  const action = document.getElementById('admin-bulk-action').value;
+  if(!company) return fail('Pick a company.');
+  if(!startDate) return fail('Pick a date.');
+  if(endDate < startDate) return fail('The "To" date is before the "From" date.');
+
+  const dates = [];
+  const cursor = new Date(startDate + 'T00:00:00');
+  while(dateKeyLocal(cursor) <= endDate){
+    dates.push(dateKeyLocal(cursor));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const targets = allAdminProfiles.filter(p => p.company === company);
+  if(!targets.length) return fail('No accounts found for that company.');
+
+  const actionLabel = action === 'rest' ? 'a rest day' : "each person's own Saturday shift";
+  const dateLabel = dates.length > 1 ? (fmtDateLabel(startDate) + ' to ' + fmtDateLabel(endDate)) : fmtDateLabel(startDate);
+  if(!confirm('Set ' + dateLabel + ' to ' + actionLabel + ' for all ' + targets.length + ' account(s) in "' + company + '"? This writes a calendar override for each account — it does not touch anyone\'s rota or shift types.')) return;
+
+  statusEl.style.color = 'var(--text-dim)';
+  let done = 0, failed = 0;
+  for(const user of targets){
+    statusEl.textContent = 'Applying… ' + done + '/' + targets.length;
+    try{
+      if(action === 'rest'){
+        const rows = dates.map(d => ({ user_id: user.id, override_date: d, value: '', source: 'admin_bulk' }));
+        const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
+        if(error) throw error;
+      } else {
+        const { data: rotaArr, error: rotaErr } = await sb.from('rota_settings').select('*').eq('user_id', user.id);
+        if(rotaErr) throw rotaErr;
+        const rota = rotaArr && rotaArr[0];
+        if(rota && rota.rota_start){
+          const rows = [];
+          dates.forEach(d => {
+            const v = resolveRotaForDate(rota.rota_start, rota.weeks, rota.original_pattern, rota.schedule, d);
+            if(!v.rota_start) return;
+            const { satIdx } = patternIndexAndSaturday(v.rota_start, v.weeks, d);
+            rows.push({ user_id: user.id, override_date: d, value: (v.pattern || [])[satIdx] || '', source: 'admin_bulk' });
+          });
+          if(rows.length){
+            const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
+            if(error) throw error;
+          }
+        }
+      }
+      done++;
+    }catch(e){ failed++; }
+  }
+  statusEl.style.color = failed ? 'var(--danger)' : 'var(--teal)';
+  statusEl.textContent = 'Done — updated ' + done + ' account(s)' + (failed ? ', ' + failed + ' failed' : '') + '.';
+
+  // In case the admin's own account was included in that company.
+  if(targets.some(t => t.id === effectiveUserId())){
+    const { data } = await sb.from('overrides').select('*').eq('user_id', effectiveUserId()).order('override_date');
+    allOverrides = data || [];
+    renderCalendarTab();
+  }
+}
+
+// ---------- Announcements (admin-posted banner for a date range) ----------
+
+async function loadAnnouncements(){
+  const { data, error } = await sb.from('announcements').select('*').order('start_date');
+  allAnnouncements = error ? [] : (data || []);
+  renderAnnouncementBanner();
+}
+
+function renderAnnouncementBanner(){
+  const banner = document.getElementById('announcement-banner');
+  const list = document.getElementById('announcement-banner-list');
+  if(!banner || !list) return;
+  const todayKey = dateKeyLocal(new Date());
+  const active = allAnnouncements.filter(a =>
+    a.start_date <= todayKey && a.end_date >= todayKey && (!a.company || a.company === myCompany)
+  );
+  if(!active.length){ banner.style.display = 'none'; return; }
+  banner.style.display = 'block';
+  list.innerHTML = active.map(a => '<div style="padding:3px 0;">📢 <strong>' + escapeHtml(a.message) + '</strong></div>').join('');
+}
+
+async function createAnnouncement(){
+  const statusEl = document.getElementById('ann-status');
+  const fail = (msg) => { statusEl.style.color = 'var(--danger)'; statusEl.textContent = msg; };
+  const company = document.getElementById('ann-company').value || null;
+  const startDate = document.getElementById('ann-start').value;
+  const endDate = document.getElementById('ann-end').value;
+  const message = document.getElementById('ann-message').value.trim();
+  if(!message) return fail('Enter a message.');
+  if(!startDate || !endDate) return fail('Pick a start and end date.');
+  if(endDate < startDate) return fail('The end date is before the start date.');
+  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Posting…';
+  const { error } = await sb.from('announcements').insert({ company, message, start_date: startDate, end_date: endDate });
+  if(error){
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = /relation|announcements|does not exist/i.test(error.message)
+      ? 'Needs a one-off database update — run the announcements block from db-setup.sql.'
+      : error.message;
+    return;
+  }
+  document.getElementById('ann-message').value = '';
+  statusEl.style.color = 'var(--teal)'; statusEl.textContent = 'Posted.';
+  await loadAnnouncements();
+  renderAdminAnnouncementsList();
+}
+
+function renderAdminAnnouncementsList(){
+  const el = document.getElementById('admin-announcements-list');
+  if(!el) return;
+  if(!allAnnouncements.length){ el.innerHTML = '<p class="empty">No announcements yet.</p>'; return; }
+  el.innerHTML = '';
+  allAnnouncements.forEach(a => {
+    const div = document.createElement('div'); div.className = 'off-item';
+    div.innerHTML = '<span><strong style="color:var(--text);">' + escapeHtml(a.message) + '</strong>'
+      + '<br><span style="font-size:12px;color:var(--text-dim);">' + escapeHtml(a.company || 'Everyone')
+      + ' · ' + fmtDateLabel(a.start_date) + ' – ' + fmtDateLabel(a.end_date) + '</span></span>';
+    const rm = document.createElement('button'); rm.textContent = 'Delete'; rm.style.color = 'var(--danger)';
+    rm.onclick = async () => {
+      if(!confirm('Delete this announcement?')) return;
+      await sb.from('announcements').delete().eq('id', a.id);
+      await loadAnnouncements();
+      renderAdminAnnouncementsList();
+    };
+    div.appendChild(rm);
+    el.appendChild(div);
+  });
 }
 
 // Admin-only: manage the route-text -> bustimes.org service slug lookup the
