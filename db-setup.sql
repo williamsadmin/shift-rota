@@ -328,4 +328,30 @@ create policy "Admins can manage any bus rating" on public.bus_ratings
 --     that one if it's already been run.
 -- ---------------------------------------------------------------------
 alter table public.shift_types drop column if exists show_early_start;
+
+-- ---------------------------------------------------------------------
+-- 13. Announcements — an admin-posted banner shown at the top of the app
+--     for a date range (e.g. "Christmas Day is a day off for everyone" or
+--     "24 Dec - 1 Jan runs a Saturday service"). company = null shows to
+--     every account; otherwise only to accounts in that company. Posted
+--     and removed from the Admin tab; every signed-in user can read them.
+-- ---------------------------------------------------------------------
+create table if not exists public.announcements (
+  id uuid primary key default gen_random_uuid(),
+  company text,
+  message text not null,
+  start_date date not null,
+  end_date date not null,
+  created_at timestamptz not null default now()
+);
+alter table public.announcements enable row level security;
+
+drop policy if exists "Anyone can view announcements" on public.announcements;
+create policy "Anyone can view announcements" on public.announcements
+  for select to authenticated using (true);
+
+drop policy if exists "Admins can manage announcements" on public.announcements;
+create policy "Admins can manage announcements" on public.announcements
+  for all using (public.is_admin())
+  with check (public.is_admin());
 alter table public.profiles add column if not exists show_early_start boolean not null default false;
