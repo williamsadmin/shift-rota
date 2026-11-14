@@ -4785,10 +4785,13 @@ function renderTrackerView(data){
   if(Array.isArray(data.stops) && data.stops.length){
     stopsEl.innerHTML = '<div class="off-item" style="flex-direction:column;align-items:stretch;">' +
       data.stops.map((s, i) => {
-        // Only a real run (has a route and a shown time) has anything to look
-        // up — Break/FUEL/PAY IN rows aren't clickable, same as in the
-        // next-7-days preview.
-        const canExpand = !!(s.route && s.scheduled);
+        // Only a real public run has bustimes.org stops to look up — Break
+        // (now shown with its own length via `scheduled`) and FUEL/PAY IN
+        // rows aren't clickable, same as in the next-7-days preview. The
+        // Worker says so directly via `lookupable` rather than this
+        // guessing from route/scheduled being set, since Break legs now
+        // have both of those too.
+        const canExpand = !!s.lookupable;
         const key = s.start + '|' + s.end;
         const isOpen = canExpand && trackerLegExpanded.has(key);
         const rowAttrs = canExpand ? ' onclick="toggleLegStops(\'' + key + '\',\'' + s.start + '\',\'' + s.end + '\')" style="cursor:pointer;display:flex;justify-content:space-between;padding:4px 0;' : ' style="cursor:default;display:flex;justify-content:space-between;padding:4px 0;';
@@ -4901,9 +4904,10 @@ function renderTrackerUpcoming(days){
       html += d.shifts.filter(s => Array.isArray(s.legs) && s.legs.length).map(s =>
         '<p class="help" style="margin:4px 0 2px 10px;font-weight:600;color:var(--text);">' + escapeHtml(s.name) + '</p>'
         + s.legs.map(l => {
-          // A real run (has a route and a shown time) can be tapped for its
-          // scheduled stop times; Break/FUEL/PAY IN rows can't be looked up.
-          const canExpand = !!(l.route && l.scheduled);
+          // A real public run can be tapped for its scheduled stop times;
+          // Break (shown with its own length) and FUEL/PAY IN rows can't be
+          // looked up — the Worker says so directly via `lookupable`.
+          const canExpand = !!l.lookupable;
           const legKey = d.date + '|' + l.start + '|' + l.end;
           const legIsOpen = canExpand && trackerLegExpanded.has(legKey);
           const legAttrs = canExpand ? ' style="cursor:pointer;" onclick="toggleUpcomingLegStops(\'' + d.date + '\',\'' + l.start + '\',\'' + l.end + '\')"' : ' style="cursor:default;"';
