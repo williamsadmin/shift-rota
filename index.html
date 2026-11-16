@@ -1119,6 +1119,13 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           <div><label>Company</label><select id="admin-bulk-company"><option value="">— Choose a company —</option></select></div>
         </div>
         <div class="row">
+          <div>
+            <label>Only for these blocks (optional — hold Ctrl/Cmd to pick several)</label>
+            <select id="admin-bulk-blocks" multiple size="4"></select>
+            <p class="help" style="margin:4px 0 0;">Leave nothing selected to apply to every account in the company regardless of duty. Pick one or more blocks (e.g. Matlock Sixes, Red Arrow) to only change a date where that person's current duty is on one of those routes — any other date, or a different route, is left exactly as it is.</p>
+          </div>
+        </div>
+        <div class="row">
           <div><label>From date</label><input type="date" id="admin-bulk-start"></div>
           <div><label>To date (optional — same as "From" if left blank)</label><input type="date" id="admin-bulk-end"></div>
         </div>
@@ -6612,6 +6619,29 @@ function populateAdminCompanySelects(){
     annSel.innerHTML = '<option value="">Everyone</option>'
       + companies.map(c => '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>').join('');
   }
+  // Blocks (template categories — see "Blocks" further down) that the bulk
+  // tool can filter by, so e.g. only one route's duties get the holiday
+  // change while everything else stays normal.
+  const blockSel = document.getElementById('admin-bulk-blocks');
+  if(blockSel){
+    const blocks = [...new Set(templates.map(t => t.category).filter(Boolean))].sort();
+    blockSel.innerHTML = blocks.map(b => '<option value="' + escapeHtml(b) + '">' + escapeHtml(b) + '</option>').join('');
+  }
+}
+
+// Maps a user's own shift-type id -> the block/category of the template it
+// was copied from (via source_template_id) — personal shift copies don't
+// carry category themselves, only their source template does. A shift with
+// no source template (never copied from one) has no block, so it never
+// matches a block filter. Used by applyBulkCompanyOverride()'s block filter.
+function buildShiftCategoryMap(shiftTypesArr){
+  const map = {};
+  shiftTypesArr.forEach(s => {
+    if(!s.source_template_id) return;
+    const tpl = templates.find(t => t.id === s.source_template_id);
+    if(tpl && tpl.category) map[s.id] = tpl.category;
+  });
+  return map;
 }
 
 // Admin-only: sets one date (or a range) to the same thing for every account
@@ -6627,6 +6657,7 @@ async function applyBulkCompanyOverride(){
   const startDate = document.getElementById('admin-bulk-start').value;
   const endDate = document.getElementById('admin-bulk-end').value || startDate;
   const action = document.getElementById('admin-bulk-action').value;
+  const selectedBlocks = Array.from(document.getElementById('admin-bulk-blocks').selectedOptions).map(o => o.value);
   if(!company) return fail('Pick a company.');
   if(!startDate) return fail('Pick a date.');
   if(endDate < startDate) return fail('The "To" date is before the "From" date.');
@@ -6641,45 +6672,65 @@ async function applyBulkCompanyOverride(){
   if(!targets.length) return fail('No accounts found for that company.');
 
   // 0=Sun..6=Sat — which weekday's pattern column to copy for a given
-  // non-"rest" action. Keyed by the <select>'s own option values.
-  const ACTION_WEEKDAY = { saturday: 6, sunday: 0 };
+  // non-"rest" action. Keyed by the <select>'s own option values. "rest"
+  // never reads matchIdx, so its entry here is never used — only present
+  // so patternIndexForWeekday() always gets a real number.
+  const ACTION_WEEKDAY = { rest: 6, saturday: 6, sunday: 0 };
   const actionLabel = action === 'rest' ? 'a rest day' : "each person's own " + (action === 'sunday' ? 'Sunday' : 'Saturday') + ' shift';
   const dateLabel = dates.length > 1 ? (fmtDateLabel(startDate) + ' to ' + fmtDateLabel(endDate)) : fmtDateLabel(startDate);
-  if(!confirm('Set ' + dateLabel + ' to ' + actionLabel + ' for all ' + targets.length + ' account(s) in "' + company + '"? This writes a calendar override for each account — it does not touch anyone\'s rota or shift types.')) return;
+  const blockNote = selectedBlocks.length ? (', only on dates where their current duty is in ' + selectedBlocks.join(' / ')) : '';
+  if(!confirm('Set ' + dateLabel + ' to ' + actionLabel + ' for all ' + targets.length + ' account(s) in "' + company + '"' + blockNote + '? This writes a calendar override for each account — it does not touch anyone\'s rota or shift types.')) return;
 
   statusEl.style.color = 'var(--text-dim)';
-  let done = 0, failed = 0;
+  let done = 0, failed = 0, skippedDates = 0;
   for(const user of targets){
     statusEl.textContent = 'Applying… ' + done + '/' + targets.length;
     try{
-      if(action === 'rest'){
+      // The fast path: no block filter and every date becomes the same
+      // rest day regardless of what that person's rota says — no need to
+      // load their rota/shift types at all.
+      if(action === 'rest' && !selectedBlocks.length){
         const rows = dates.map(d => ({ user_id: user.id, override_date: d, value: '', source: 'admin_bulk' }));
         const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
         if(error) throw error;
-      } else {
-        const { data: rotaArr, error: rotaErr } = await sb.from('rota_settings').select('*').eq('user_id', user.id);
-        if(rotaErr) throw rotaErr;
-        const rota = rotaArr && rotaArr[0];
-        if(rota && rota.rota_start){
-          const targetWeekday = ACTION_WEEKDAY[action];
-          const rows = [];
-          dates.forEach(d => {
-            const v = resolveRotaForDate(rota.rota_start, rota.weeks, rota.original_pattern, rota.schedule, d);
-            if(!v.rota_start) return;
-            const { matchIdx } = patternIndexForWeekday(v.rota_start, v.weeks, d, targetWeekday);
-            rows.push({ user_id: user.id, override_date: d, value: (v.pattern || [])[matchIdx] || '', source: 'admin_bulk' });
-          });
-          if(rows.length){
-            const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
-            if(error) throw error;
+        done++;
+        continue;
+      }
+
+      const [{ data: rotaArr, error: rotaErr }, { data: shiftTypesArr, error: stErr }] = await Promise.all([
+        sb.from('rota_settings').select('*').eq('user_id', user.id),
+        selectedBlocks.length ? sb.from('shift_types').select('*').eq('owner_id', user.id) : Promise.resolve({ data: [], error: null })
+      ]);
+      if(rotaErr) throw rotaErr;
+      if(stErr) throw stErr;
+      const rota = rotaArr && rotaArr[0];
+      if(rota && rota.rota_start){
+        const categoryMap = selectedBlocks.length ? buildShiftCategoryMap(shiftTypesArr || []) : null;
+        const targetWeekday = ACTION_WEEKDAY[action];
+        const rows = [];
+        dates.forEach(d => {
+          const v = resolveRotaForDate(rota.rota_start, rota.weeks, rota.original_pattern, rota.schedule, d);
+          if(!v.rota_start) return;
+          const { idx, matchIdx } = patternIndexForWeekday(v.rota_start, v.weeks, d, targetWeekday);
+          if(categoryMap){
+            const normalValue = (v.pattern || [])[idx] || '';
+            const inBlock = splitShiftIds(normalValue).some(id => selectedBlocks.includes(categoryMap[id]));
+            if(!inBlock){ skippedDates++; return; }
           }
+          const value = action === 'rest' ? '' : ((v.pattern || [])[matchIdx] || '');
+          rows.push({ user_id: user.id, override_date: d, value, source: 'admin_bulk' });
+        });
+        if(rows.length){
+          const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
+          if(error) throw error;
         }
       }
       done++;
     }catch(e){ failed++; }
   }
   statusEl.style.color = failed ? 'var(--danger)' : 'var(--teal)';
-  statusEl.textContent = 'Done — updated ' + done + ' account(s)' + (failed ? ', ' + failed + ' failed' : '') + '.';
+  statusEl.textContent = 'Done — updated ' + done + ' account(s)' + (failed ? ', ' + failed + ' failed' : '')
+    + (skippedDates ? ' (' + skippedDates + ' date/account combination(s) left unchanged — not in the selected block(s))' : '') + '.';
 
   // In case the admin's own account was included in that company.
   if(targets.some(t => t.id === effectiveUserId())){
