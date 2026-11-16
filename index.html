@@ -1114,7 +1114,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
 
       <section>
         <p class="sec-title">Bulk calendar changes</p>
-        <p class="help" style="margin-top:0;">Change a date — or a range of dates — for every account in one company at once, e.g. give everyone Christmas Day off, or run a Saturday service over the festive period. This only writes a calendar override per account; it never touches anyone's rota or shift types.</p>
+        <p class="help" style="margin-top:0;">Change a date — or a range of dates — for every account in one company at once, e.g. give everyone Christmas Day off, or run a Saturday/Sunday service over the festive period. This only writes a calendar override per account; it never touches anyone's rota or shift types.</p>
         <div class="row">
           <div><label>Company</label><select id="admin-bulk-company"><option value="">— Choose a company —</option></select></div>
         </div>
@@ -1128,6 +1128,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
             <select id="admin-bulk-action">
               <option value="rest">A rest day (day off)</option>
               <option value="saturday">Each person's own Saturday shift (run a Saturday service)</option>
+              <option value="sunday">Each person's own Sunday shift (run a Sunday service)</option>
             </select>
           </div>
         </div>
@@ -1146,9 +1147,11 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           <div><label>To date</label><input type="date" id="ann-end"></div>
         </div>
         <div><label>Message</label><textarea id="ann-message" placeholder="e.g. Christmas Day is a day off for everyone. 24 Dec - 1 Jan runs a Saturday service." style="min-height:70px;"></textarea></div>
-        <button class="btn full" type="button" onclick="createAnnouncement()">Post announcement</button>
+        <button class="btn full" type="button" id="ann-submit-btn" onclick="createAnnouncement()">Post announcement</button>
+        <button class="btn secondary full" type="button" id="ann-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelEditAnnouncement()">Cancel edit</button>
         <div class="status" id="ann-status"></div>
-        <div id="admin-announcements-list" style="margin-top:12px;"></div>
+        <p class="help" style="margin:14px 0 4px;font-weight:600;color:var(--text);">Published announcements</p>
+        <div id="admin-announcements-list"></div>
       </section>
     </div>
   </div>
@@ -1226,6 +1229,7 @@ let selectedFriend2 = null; // optional third person in the compare view
 let friendData2 = { rota: null, overrides: [], shiftTypes: [] };
 let allAdminProfiles = []; // loaded once per admin session for account management
 let allAnnouncements = []; // loaded for every signed-in user, not just admins — see loadAnnouncements()
+let editingAnnouncementId = null; // set while the admin announcement form is editing an existing row instead of posting a new one
 let adminEditRota = null; // { userId, weeks, weekStartDay, rotaStart, pattern, shiftTypes }
 let adminEditCal = null;  // { userId, rota, overrides, shiftTypes } — editing a user's My Calendar
 // Rota template builder state (admin only)
@@ -4982,21 +4986,22 @@ function resolveRotaForDate(baseStart, baseWeeks, basePattern, schedule, dateStr
 }
 
 // Given a resolved rota version's rota_start/weeks and a real date within
-// it, finds the pattern index of the Saturday in that SAME pattern week —
-// used by the admin's "run a Saturday service" bulk holiday-period action
-// (applyBulkCompanyOverride()). Only the column-within-week matters (no
-// need to locate an actual calendar Saturday): a pattern cycle is always a
-// whole number of weeks, so every week in it repeats the same weekday in
-// each column position as rota_start's own weekday.
-function patternIndexAndSaturday(rotaStartStr, weeksN, dateStr){
+// it, finds the pattern index of the given weekday (0=Sun..6=Sat) in that
+// SAME pattern week — used by the admin's "run a Saturday/Sunday service"
+// bulk holiday-period action (applyBulkCompanyOverride()). Only the
+// column-within-week matters (no need to locate an actual calendar
+// Saturday/Sunday): a pattern cycle is always a whole number of weeks, so
+// every week in it repeats the same weekday in each column position as
+// rota_start's own weekday.
+function patternIndexForWeekday(rotaStartStr, weeksN, dateStr, targetWeekday){
   const start = new Date(rotaStartStr + 'T00:00:00');
   const d = new Date(dateStr + 'T00:00:00');
   const len = (weeksN || 1) * 7;
   let idx = Math.floor((d - start) / 86400000) % len;
   if(idx < 0) idx += len;
   const col = idx % 7;
-  const satCol = ((6 - start.getDay()) % 7 + 7) % 7;
-  return { idx, satIdx: idx - col + satCol };
+  const targetCol = ((targetWeekday - start.getDay()) % 7 + 7) % 7;
+  return { idx, matchIdx: idx - col + targetCol };
 }
 
 // Folds any scheduled rota change (see addScheduledRotaChange() /
@@ -6635,7 +6640,10 @@ async function applyBulkCompanyOverride(){
   const targets = allAdminProfiles.filter(p => p.company === company);
   if(!targets.length) return fail('No accounts found for that company.');
 
-  const actionLabel = action === 'rest' ? 'a rest day' : "each person's own Saturday shift";
+  // 0=Sun..6=Sat — which weekday's pattern column to copy for a given
+  // non-"rest" action. Keyed by the <select>'s own option values.
+  const ACTION_WEEKDAY = { saturday: 6, sunday: 0 };
+  const actionLabel = action === 'rest' ? 'a rest day' : "each person's own " + (action === 'sunday' ? 'Sunday' : 'Saturday') + ' shift';
   const dateLabel = dates.length > 1 ? (fmtDateLabel(startDate) + ' to ' + fmtDateLabel(endDate)) : fmtDateLabel(startDate);
   if(!confirm('Set ' + dateLabel + ' to ' + actionLabel + ' for all ' + targets.length + ' account(s) in "' + company + '"? This writes a calendar override for each account — it does not touch anyone\'s rota or shift types.')) return;
 
@@ -6653,12 +6661,13 @@ async function applyBulkCompanyOverride(){
         if(rotaErr) throw rotaErr;
         const rota = rotaArr && rotaArr[0];
         if(rota && rota.rota_start){
+          const targetWeekday = ACTION_WEEKDAY[action];
           const rows = [];
           dates.forEach(d => {
             const v = resolveRotaForDate(rota.rota_start, rota.weeks, rota.original_pattern, rota.schedule, d);
             if(!v.rota_start) return;
-            const { satIdx } = patternIndexAndSaturday(v.rota_start, v.weeks, d);
-            rows.push({ user_id: user.id, override_date: d, value: (v.pattern || [])[satIdx] || '', source: 'admin_bulk' });
+            const { matchIdx } = patternIndexForWeekday(v.rota_start, v.weeks, d, targetWeekday);
+            rows.push({ user_id: user.id, override_date: d, value: (v.pattern || [])[matchIdx] || '', source: 'admin_bulk' });
           });
           if(rows.length){
             const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
@@ -6701,6 +6710,8 @@ function renderAnnouncementBanner(){
   list.innerHTML = active.map(a => '<div style="padding:3px 0;">📢 <strong>' + escapeHtml(a.message) + '</strong></div>').join('');
 }
 
+// Posts a new announcement, or — while editingAnnouncementId is set via
+// startEditAnnouncement() — saves changes to that existing one instead.
 async function createAnnouncement(){
   const statusEl = document.getElementById('ann-status');
   const fail = (msg) => { statusEl.style.color = 'var(--danger)'; statusEl.textContent = msg; };
@@ -6711,8 +6722,12 @@ async function createAnnouncement(){
   if(!message) return fail('Enter a message.');
   if(!startDate || !endDate) return fail('Pick a start and end date.');
   if(endDate < startDate) return fail('The end date is before the start date.');
-  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Posting…';
-  const { error } = await sb.from('announcements').insert({ company, message, start_date: startDate, end_date: endDate });
+  const editing = editingAnnouncementId;
+  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = editing ? 'Saving…' : 'Posting…';
+  const payload = { company, message, start_date: startDate, end_date: endDate };
+  const { error } = editing
+    ? await sb.from('announcements').update(payload).eq('id', editing)
+    : await sb.from('announcements').insert(payload);
   if(error){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = /relation|announcements|does not exist/i.test(error.message)
@@ -6720,30 +6735,61 @@ async function createAnnouncement(){
       : error.message;
     return;
   }
-  document.getElementById('ann-message').value = '';
-  statusEl.style.color = 'var(--teal)'; statusEl.textContent = 'Posted.';
+  statusEl.style.color = 'var(--teal)'; statusEl.textContent = editing ? 'Saved.' : 'Posted.';
+  if(editing) cancelEditAnnouncement(); else document.getElementById('ann-message').value = '';
   await loadAnnouncements();
   renderAdminAnnouncementsList();
+}
+
+// Loads an existing announcement's fields into the form above and switches
+// it into "edit" mode — createAnnouncement() then saves over that row
+// instead of posting a new one.
+function startEditAnnouncement(a){
+  editingAnnouncementId = a.id;
+  document.getElementById('ann-company').value = a.company || '';
+  document.getElementById('ann-start').value = a.start_date;
+  document.getElementById('ann-end').value = a.end_date;
+  document.getElementById('ann-message').value = a.message;
+  document.getElementById('ann-submit-btn').textContent = 'Save changes';
+  document.getElementById('ann-cancel-btn').style.display = 'block';
+  document.getElementById('ann-status').textContent = '';
+  document.getElementById('ann-message').scrollIntoView({ behavior:'smooth', block:'center' });
+}
+
+function cancelEditAnnouncement(){
+  editingAnnouncementId = null;
+  document.getElementById('ann-company').value = '';
+  document.getElementById('ann-start').value = '';
+  document.getElementById('ann-end').value = '';
+  document.getElementById('ann-message').value = '';
+  document.getElementById('ann-submit-btn').textContent = 'Post announcement';
+  document.getElementById('ann-cancel-btn').style.display = 'none';
+  document.getElementById('ann-status').textContent = '';
 }
 
 function renderAdminAnnouncementsList(){
   const el = document.getElementById('admin-announcements-list');
   if(!el) return;
-  if(!allAnnouncements.length){ el.innerHTML = '<p class="empty">No announcements yet.</p>'; return; }
+  if(!allAnnouncements.length){ el.innerHTML = '<p class="empty">No announcements published yet.</p>'; return; }
   el.innerHTML = '';
   allAnnouncements.forEach(a => {
     const div = document.createElement('div'); div.className = 'off-item';
     div.innerHTML = '<span><strong style="color:var(--text);">' + escapeHtml(a.message) + '</strong>'
       + '<br><span style="font-size:12px;color:var(--text-dim);">' + escapeHtml(a.company || 'Everyone')
       + ' · ' + fmtDateLabel(a.start_date) + ' – ' + fmtDateLabel(a.end_date) + '</span></span>';
-    const rm = document.createElement('button'); rm.textContent = 'Delete'; rm.style.color = 'var(--danger)';
+    const btnGroup = document.createElement('span');
+    const editBtn = document.createElement('button'); editBtn.textContent = 'Edit'; editBtn.style.color = 'var(--teal)';
+    editBtn.onclick = () => startEditAnnouncement(a);
+    const rm = document.createElement('button'); rm.textContent = 'Delete'; rm.style.color = 'var(--danger)'; rm.style.marginLeft = '10px';
     rm.onclick = async () => {
       if(!confirm('Delete this announcement?')) return;
+      if(editingAnnouncementId === a.id) cancelEditAnnouncement();
       await sb.from('announcements').delete().eq('id', a.id);
       await loadAnnouncements();
       renderAdminAnnouncementsList();
     };
-    div.appendChild(rm);
+    btnGroup.appendChild(editBtn); btnGroup.appendChild(rm);
+    div.appendChild(btnGroup);
     el.appendChild(div);
   });
 }
