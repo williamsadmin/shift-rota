@@ -477,6 +477,19 @@
         <div id="people-list" style="margin-top:12px;"></div>
       </section>
 
+      <section>
+        <p class="sec-title">Which duty is this?</p>
+        <p class="help" style="margin-top:0;">Seen a bus out on the road and want to know which duty it's running? Enter the route, a time, and (optionally) the direction — e.g. a place it's heading to or coming from.</p>
+        <div class="row">
+          <div style="max-width:140px;"><label>Route</label><input type="text" id="route-search-route" placeholder="e.g. 6.1"></div>
+          <div style="max-width:140px;"><label>Time (optional)</label><input type="time" id="route-search-time"></div>
+          <div><label>Direction (optional)</label><input type="text" id="route-search-direction" placeholder="e.g. Derby, Matlock, Outbound"></div>
+        </div>
+        <button class="btn secondary full" type="button" onclick="searchShiftsByRoute()">Search</button>
+        <div class="status" id="route-search-status"></div>
+        <div id="route-search-results" style="margin-top:10px;"></div>
+      </section>
+
       <section id="friend-detail-section" style="display:none;">
         <p class="sec-title" id="friend-detail-title">Their rota</p>
         <div class="checkbox-row">
@@ -1396,6 +1409,72 @@ function populateLocationFilter(){
   locSel.innerHTML = '<option value="__all__">All locations</option>'
     + locs.map(l => '<option value="' + escapeHtml(l) + '">' + escapeHtml(l) + '</option>').join('');
   locSel.value = [...locSel.options].some(o => o.value === prev) ? prev : '__all__';
+}
+
+// "HH:MM" -> minutes since midnight, or null if unparseable.
+function parseTimeToMinutes(hhmm){
+  if(!hhmm) return null;
+  const m = String(hhmm).match(/^(\d{1,2}):(\d{2})/);
+  if(!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+
+// Does a duty-board leg's start-end window cover this minute-of-day,
+// including a leg that runs past midnight (end time earlier than start)?
+function legCoversMinute(leg, minute){
+  const startMin = parseTimeToMinutes(leg.start), endMin = parseTimeToMinutes(leg.end);
+  if(startMin === null || endMin === null || minute === null) return false;
+  return endMin >= startMin ? (minute >= startMin && minute <= endMin) : (minute >= startMin || minute <= endMin);
+}
+
+// "Which duty is this?" (People tab) — given a route, and optionally a time
+// and a direction (free text matched against a leg's from/to/extra, e.g. a
+// place name or "Outbound"), finds which shared duty template(s) have a
+// matching leg. Searches `templates` (the shared duty catalog), not any one
+// person's own shift copies, since the question is "which duty number is
+// this", independent of who's actually covering it — filtered through
+// userHasCategoryAccess() the same as the rest of the Templates/swap UI, so
+// it never surfaces a block this account can't otherwise see.
+function searchShiftsByRoute(){
+  const statusEl = document.getElementById('route-search-status');
+  const resultsEl = document.getElementById('route-search-results');
+  resultsEl.innerHTML = '';
+  const routeQuery = document.getElementById('route-search-route').value.trim();
+  const time = document.getElementById('route-search-time').value;
+  const direction = document.getElementById('route-search-direction').value.trim().toLowerCase();
+  if(!routeQuery){ statusEl.style.color = 'var(--danger)'; statusEl.textContent = 'Enter a route.'; return; }
+  const minute = time ? parseTimeToMinutes(time) : null;
+  const routeLower = routeQuery.toLowerCase();
+
+  const matches = [];
+  templates.filter(t => userHasCategoryAccess(t.category) && Array.isArray(t.legs_data)).forEach(t => {
+    t.legs_data.forEach(leg => {
+      if((leg.route || '').trim().toLowerCase() !== routeLower) return;
+      if(minute !== null && !legCoversMinute(leg, minute)) return;
+      if(direction){
+        const hay = ((leg.from || '') + ' ' + (leg.to || '') + ' ' + (leg.extra || '')).toLowerCase();
+        if(!hay.includes(direction)) return;
+      }
+      matches.push({ duty: t, leg });
+    });
+  });
+  matches.sort((a, b) => (parseTimeToMinutes(a.leg.start) || 0) - (parseTimeToMinutes(b.leg.start) || 0));
+
+  if(!matches.length){
+    statusEl.style.color = 'var(--text-dim)';
+    statusEl.textContent = 'No duty found covering route "' + routeQuery + '"'
+      + (time ? ' at ' + time : '') + (direction ? ' towards/from "' + document.getElementById('route-search-direction').value.trim() + '"' : '') + '.';
+    return;
+  }
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = matches.length + ' match' + (matches.length !== 1 ? 'es' : '') + ' found.';
+  resultsEl.innerHTML = matches.map(m => {
+    const dir = [m.leg.from, m.leg.to].filter(Boolean).join(' → ');
+    return '<div class="off-item"><span><strong style="color:var(--text);">' + escapeHtml(m.duty.name) + '</strong>'
+      + (m.duty.category ? ' <span style="color:var(--text-dim);font-size:12px;">· ' + escapeHtml(m.duty.category) + '</span>' : '')
+      + '<br><span style="font-size:13px;color:var(--text-dim);">' + escapeHtml(m.leg.route)
+      + (dir ? ' · ' + escapeHtml(dir) : '') + ' · ' + escapeHtml(m.leg.start) + '–' + escapeHtml(m.leg.end) + '</span></span></div>';
+  }).join('');
 }
 
 function renderPeopleList(){
