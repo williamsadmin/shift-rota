@@ -371,3 +371,16 @@ alter table public.profiles add column if not exists show_early_start boolean no
 alter table public.shift_types add column if not exists line_number text;
 alter table public.rota_settings add column if not exists rota_template_id uuid;
 alter table public.profiles add column if not exists show_line_numbers boolean not null default false;
+
+-- ---------------------------------------------------------------------
+-- 15. Records which weekday's service a day is actually running as, when
+--     it differs from its own real calendar weekday — set by the admin's
+--     "run a Saturday/Sunday service" bulk calendar change
+--     (applyBulkCompanyOverride() in index.html), e.g. Mon 28 Dec running
+--     as a Sunday service. The swap picker (Swap a shift) uses this so a
+--     shift's allowed_days is judged against the day it's really running
+--     as, not its own calendar weekday — otherwise every shift would show
+--     as an option on a day converted to a different service. 0=Sun..6=Sat;
+--     null means "just use the real calendar weekday" (the normal case).
+-- ---------------------------------------------------------------------
+alter table public.overrides add column if not exists effective_weekday smallint;

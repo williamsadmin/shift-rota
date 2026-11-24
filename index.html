@@ -319,6 +319,7 @@
             <div class="row">
               <div style="max-width:180px;"><label>Date</label><input type="date" id="swap-from" onchange="onSwapFromDateChange()"></div>
             </div>
+            <p class="help" id="swap-admin-notice" style="display:none;color:var(--amber);"></p>
             <div style="margin-bottom:10px;">
               <label>Change to</label>
               <input type="text" id="swap-shift-search" placeholder="Search shifts…" oninput="renderSwapShiftPicker()" onfocus="revealSwapPicker()" autocomplete="off">
@@ -5530,13 +5531,49 @@ function populateSwapToSelect(){
   renderSwapShiftPicker();
 }
 
+// The weekday to judge a shift's allowed_days against for this calendar
+// date — normally its own real weekday, but if an admin's bulk calendar
+// change (applyBulkCompanyOverride()) substituted a different day's service
+// onto it (e.g. Mon 28 Dec running as a Sunday service), that override's
+// effective_weekday says which service it's actually running as, and
+// that's what "is this shift normally run today" should be judged against.
+function effectiveWeekdayForDate(dateStr){
+  if(!dateStr) return null;
+  const ov = allOverrides.find(o => o.override_date === dateStr);
+  if(ov && ov.effective_weekday != null) return ov.effective_weekday;
+  return new Date(dateStr + 'T00:00:00').getDay();
+}
+
+// Describes what an admin bulk calendar change (source: 'admin_bulk' — see
+// applyBulkCompanyOverride()) set a day to, for the notice shown above the
+// swap picker — so before picking a replacement, it's clear what the
+// workplace-wide change actually was (a rest day, or a specific shift).
+function describeAdminBulkOverride(ov){
+  if(!ov || ov.source !== 'admin_bulk') return '';
+  if(!ov.value) return 'a rest day';
+  const shifts = resolveDayShifts(ov.value, shiftTypes);
+  return shifts.length ? multiShiftNameLabel(shifts) : 'a shift';
+}
+
 function renderSwapShiftPicker(){
   const el = document.getElementById('swap-shift-picker');
   if(!el) return;
   const term = (document.getElementById('swap-shift-search')?.value || '').trim().toLowerCase();
   const current = document.getElementById('swap-to-shift')?.value || '';
   const dateVal = document.getElementById('swap-from')?.value || '';
-  const weekday = dateVal ? new Date(dateVal + 'T00:00:00').getDay() : null;
+  const weekday = effectiveWeekdayForDate(dateVal);
+
+  const noticeEl = document.getElementById('swap-admin-notice');
+  if(noticeEl){
+    const ov = dateVal ? allOverrides.find(o => o.override_date === dateVal) : null;
+    const desc = describeAdminBulkOverride(ov);
+    if(desc){
+      noticeEl.style.display = 'block';
+      noticeEl.textContent = '⚠️ Your workplace set this day to ' + desc + ' as part of a bulk change — pick what it should actually be below.';
+    } else {
+      noticeEl.style.display = 'none';
+    }
+  }
 
   if(!swapPickerRevealed && !term){
     el.innerHTML = '<p class="empty" style="margin:0;font-size:12px;">Tap the box above and search to choose a shift.</p>';
@@ -5550,8 +5587,10 @@ function renderSwapShiftPicker(){
     .filter(t => !shiftTypes.some(s => s.source_template_id === t.id))
     .map(t => ({ id: 'tpl:' + t.id, name: t.name, color: t.color, allowed_days: t.allowed_days, fromTemplate: true }));
 
-  const items = [{ id:'', name:'Rest day', color:'' }].concat(shiftTypes).concat(availableTemplates)
-    .filter(s => s.id === '' || weekday === null || !s.allowed_days || s.allowed_days[weekday] !== false);
+  // Shown regardless of allowed_days — selectSwapShift() warns (and lets the
+  // user confirm past) rather than hiding a shift outright, so covering an
+  // unusual day is still possible, just not silent.
+  const items = [{ id:'', name:'Rest day', color:'' }].concat(shiftTypes).concat(availableTemplates);
   const visible = term ? items.filter(s => s.name.toLowerCase().includes(term)) : items;
 
   if(visible.length === 0){
@@ -5564,9 +5603,11 @@ function renderSwapShiftPicker(){
     const dot = s.color
       ? '<span class="swap-pick-dot" style="background:' + escapeHtml(s.color) + ';"></span>'
       : '<span class="swap-pick-dot" style="background:var(--border);"></span>';
+    const notAllowed = s.id !== '' && weekday !== null && s.allowed_days && s.allowed_days[weekday] === false;
     const label = s.id === ''
       ? '<span class="swap-pick-rest">Rest day</span>'
-      : escapeHtml(s.name) + (s.fromTemplate ? ' <span style="color:var(--teal);font-size:11px;">· available</span>' : '');
+      : escapeHtml(s.name) + (s.fromTemplate ? ' <span style="color:var(--teal);font-size:11px;">· available</span>' : '')
+        + (notAllowed ? ' <span style="color:var(--text-dim);font-size:11px;">(not allowed this day)</span>' : '');
     return '<div class="swap-pick-item' + sel + '" data-shift-id="' + escapeHtml(s.id) + '">' + dot + label + '</div>';
   }).join('') + '</div>';
   el.querySelectorAll('.swap-pick-item').forEach(item=>{
@@ -5579,19 +5620,7 @@ function revealSwapPicker(){
   renderSwapShiftPicker();
 }
 
-// Re-check the selected target shift against the new date's weekday — clear it
-// if it's no longer an allowed day for that shift.
 function onSwapFromDateChange(){
-  const dateVal = document.getElementById('swap-from')?.value || '';
-  const weekday = dateVal ? new Date(dateVal + 'T00:00:00').getDay() : null;
-  const currentId = document.getElementById('swap-to-shift')?.value || '';
-  if(currentId && weekday !== null){
-    const shift = shiftTypes.find(s => s.id === currentId);
-    if(shift && shift.allowed_days && shift.allowed_days[weekday] === false){
-      document.getElementById('swap-to-shift').value = '';
-      document.getElementById('swap-shift-search').value = '';
-    }
-  }
   renderSwapShiftPicker();
 }
 
@@ -5646,16 +5675,34 @@ function createShiftSearchPicker(items, initialId, onChange){
   };
 }
 
+// Confirms before picking a shift that isn't normally run on this (effective)
+// weekday, rather than silently blocking it — covering an unusual day is
+// still possible, it's just not silent. Returns false (and shows nothing)
+// if the user backs out.
+function confirmIfNotAllowedDay(name, allowedDays, weekday){
+  if(weekday === null || !allowedDays || allowedDays[weekday] !== false) return true;
+  const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][weekday];
+  return confirm('"' + name + '" isn\'t normally run on a ' + dayName + '. Use it anyway?');
+}
+
 async function selectSwapShift(id){
   swapPickerRevealed = true;
-  if(id.startsWith('tpl:')){
+  const dateVal = document.getElementById('swap-from')?.value || '';
+  const weekday = effectiveWeekdayForDate(dateVal);
+
+  if(id === ''){
+    document.getElementById('swap-to-shift').value = '';
+  } else if(id.startsWith('tpl:')){
     const tplId = id.slice(4);
     const tpl = templates.find(t => t.id === tplId);
     if(!tpl) return;
+    if(!confirmIfNotAllowedDay(tpl.name, tpl.allowed_days, weekday)) return;
     const existing = shiftTypes.find(s => s.source_template_id === tplId);
     const newId = existing ? existing.id : await addTemplateToMine(tpl);
     document.getElementById('swap-to-shift').value = newId || '';
   } else {
+    const shift = shiftTypes.find(s => s.id === id);
+    if(shift && !confirmIfNotAllowedDay(shift.name, shift.allowed_days, weekday)) return;
     document.getElementById('swap-to-shift').value = id;
   }
   renderSwapShiftPicker();
@@ -5680,15 +5727,22 @@ async function finalizeSwap(choice){
   const statusEl = document.getElementById('swap-status');
   const tentative = choice === 'need_to';
   const arPending = choice === 'ar';
-  const row = { user_id: effectiveUserId(), override_date: pendingSwap.date, value: pendingSwap.newValue, source: 'self_swap', tentative, ar_pending: arPending };
+  // effective_weekday explicitly cleared: a personal swap replaces whatever
+  // was there, including an admin bulk change that had this date running as
+  // a different weekday's service (see applyBulkCompanyOverride()) — from
+  // here on, allowed_days checks for this date should judge it by its own
+  // real weekday again.
+  const row = { user_id: effectiveUserId(), override_date: pendingSwap.date, value: pendingSwap.newValue, source: 'self_swap', tentative, ar_pending: arPending, effective_weekday: null };
   statusEl.style.color = 'var(--text-dim)';
   statusEl.textContent = 'Saving…';
   const { error } = await sb.from('overrides').upsert([row], { onConflict: 'user_id,override_date' });
   document.getElementById('swap-confirm-box').style.display = 'none';
   if(error){
     statusEl.style.color = 'var(--danger)';
-    statusEl.textContent = /column|ar_pending/i.test(error.message)
+    statusEl.textContent = /ar_pending/i.test(error.message)
       ? 'Needs a one-off database update — run the ar_pending column change from db-setup.sql.'
+      : /effective_weekday/i.test(error.message)
+      ? 'Needs a one-off database update — run the effective_weekday column change from db-setup.sql.'
       : error.message;
     pendingSwap = null;
     return;
@@ -6855,7 +6909,7 @@ async function applyBulkCompanyOverride(){
       // rest day regardless of what that person's rota says — no need to
       // load their rota/shift types at all.
       if(action === 'rest' && !selectedBlocks.length){
-        const rows = dates.map(d => ({ user_id: user.id, override_date: d, value: '', source: 'admin_bulk' }));
+        const rows = dates.map(d => ({ user_id: user.id, override_date: d, value: '', source: 'admin_bulk', effective_weekday: null }));
         const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
         if(error) throw error;
         done++;
@@ -6883,7 +6937,12 @@ async function applyBulkCompanyOverride(){
             if(!inBlock){ skippedDates++; return; }
           }
           const value = action === 'rest' ? '' : ((v.pattern || [])[matchIdx] || '');
-          rows.push({ user_id: user.id, override_date: d, value, source: 'admin_bulk' });
+          // effective_weekday records which weekday's service this date is
+          // actually running as (e.g. a Monday converted to a Sunday
+          // service) — used by the swap picker so allowed_days is judged
+          // against the day it's really running as, not its own calendar
+          // weekday. null for a rest day, which has no "service" to match.
+          rows.push({ user_id: user.id, override_date: d, value, source: 'admin_bulk', effective_weekday: action === 'rest' ? null : targetWeekday });
         });
         if(rows.length){
           const { error } = await sb.from('overrides').upsert(rows, { onConflict: 'user_id,override_date' });
