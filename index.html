@@ -6918,8 +6918,13 @@ function renderAnnouncementBanner(){
   const list = document.getElementById('announcement-banner-list');
   if(!banner || !list) return;
   const todayKey = dateKeyLocal(new Date());
+  // Deliberately NOT gated on start_date <= today: the whole point is to
+  // give advance notice of a change, typically posted well before its own
+  // start date (e.g. a Christmas-period notice posted in November) — it
+  // should show from the moment it's posted right up until end_date passes,
+  // not only during the period it's announcing.
   const active = allAnnouncements.filter(a =>
-    a.start_date <= todayKey && a.end_date >= todayKey && (!a.company || a.company === myCompany)
+    a.end_date >= todayKey && (!a.company || a.company === myCompany)
   );
   if(!active.length){ banner.style.display = 'none'; return; }
   banner.style.display = 'block';
