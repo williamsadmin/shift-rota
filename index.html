@@ -802,6 +802,13 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           <div><label>Description (optional)</label><input type="text" id="rtpl-desc-text" placeholder="e.g. Mon–Sat mixed duties, depot A"></div>
         </div>
         <div class="row">
+          <div style="max-width:160px;">
+            <label>Line number (optional)</label>
+            <input type="text" id="rtpl-line-number" placeholder="e.g. 4">
+          </div>
+        </div>
+        <p class="help" style="margin-top:0;">If set, anyone with "Show line numbers" on (Account tab) sees it next to working days once they apply this rota template.</p>
+        <div class="row">
           <div style="max-width:200px;">
             <label>Pattern length (weeks)</label>
             <select id="rtpl-weeks" onchange="changeRtplWeeks()">
@@ -874,6 +881,16 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           <label for="show-early-start-toggle">Start calendar events 5 minutes earlier</label>
         </div>
         <div class="status" id="show-early-start-status"></div>
+      </section>
+
+      <section>
+        <p class="sec-title">Line numbers</p>
+        <p class="help" style="margin-top:0;">If your rota was applied from a rota template with a line number set (an admin sets this per rota template), show it next to each working day in My Calendar, and on the Rota tab.</p>
+        <div class="checkbox-row">
+          <input type="checkbox" id="show-line-numbers-toggle" onchange="saveShowLineNumbers()">
+          <label for="show-line-numbers-toggle">Show line numbers</label>
+        </div>
+        <div class="status" id="show-line-numbers-status"></div>
       </section>
 
       <section>
@@ -1217,12 +1234,17 @@ let rotaTemplates = [];  // admin rota templates (is_template = true, category =
 let pattern = Array(35).fill('');
 let weeks = 5;
 let rotaStart = '';
-// Scheduled future rota versions: [{ effective_from, rota_start, weeks, week_start_day, pattern }]
+// Which rota template (shift_types.id, category='__rota__') the currently-
+// loaded version (base or a scheduled change) was last applied from — null
+// if it was never applied from one, or has been hand-built since. Drives
+// the "Line N" label (see lineNumberForDate() / confirmApplyRotaTemplate()).
+let rotaTemplateId = null;
+// Scheduled future rota versions: [{ effective_from, rota_start, weeks, week_start_day, pattern, rota_template_id }]
 let rotaSchedule = [];
 // When editing a scheduled version, this holds its effective_from date; null = editing the current (base) rota.
 let editingRotaVersion = null;
 // Snapshot of the current (base) rota, authoritative while a scheduled version is loaded in the editor.
-let baseRota = { rota_start:'', weeks:5, week_start_day:0, pattern: Array(35).fill('') };
+let baseRota = { rota_start:'', weeks:5, week_start_day:0, pattern: Array(35).fill(''), rota_template_id: null };
 let holidays = []; // override rows where value === '__holiday__'
 let overtimeRequests = new Set(); // date strings the user has flagged to request overtime
 let payRates = { enabled:false, sun:0, mon:0, tue:0, wed:0, thu:0, fri:0, sat:0 };
@@ -1230,6 +1252,7 @@ let isAdmin = false;
 let isSignup = false;
 let accountType = 'bus'; // 'bus' | 'education' — changes terminology and hides bus-specific fields
 let showEarlyStart = false; // per-user: show every shift's clock-on time 5 min earlier, rounded down to the nearest 5
+let showLineNumbers = false; // per-user: show the rota template's line number (see lineNumberForDate()) next to working days
 let allOverrides = []; // every override row for the current user, not just holidays
 let bankHolidays = new Set();
 let pendingSwap = null; // { fromDate, toDate, fromValue, toValue }
@@ -3282,6 +3305,27 @@ async function saveShowEarlyStart(){
   statusEl.textContent = 'Saved.';
 }
 
+async function saveShowLineNumbers(){
+  const checkbox = document.getElementById('show-line-numbers-toggle');
+  const statusEl = document.getElementById('show-line-numbers-status');
+  const newVal = checkbox.checked;
+  statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = 'Saving…';
+  const { error } = await sb.from('profiles').update({ show_line_numbers: newVal }).eq('id', effectiveUserId());
+  if(error){
+    checkbox.checked = !newVal;
+    statusEl.style.color = 'var(--danger)';
+    statusEl.textContent = /column|show_line_numbers/i.test(error.message)
+      ? 'Needs a one-off database update — run the show_line_numbers column change from db-setup.sql.'
+      : error.message;
+    return;
+  }
+  showLineNumbers = newVal;
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = 'Saved.';
+  renderCalendarTab();
+  renderOriginalGrid();
+}
+
 // Account tab: blocks (shift-template categories) beyond the user's own
 // company default — self-request here, an admin approves in Admin Templates.
 function renderMyBlocksList(){
@@ -3325,14 +3369,15 @@ async function loadAccountData(){
     sb.from('rota_settings').select('*').eq('user_id', effectiveUserId()).maybeSingle(),
     sb.from('overrides').select('*').eq('user_id', effectiveUserId()).order('override_date'),
     sb.from('pay_rates').select('*').eq('user_id', effectiveUserId()).maybeSingle(),
-    sb.from('profiles').select('is_admin,username,top_tabs,account_type,company,show_early_start').eq('id', effectiveUserId()).maybeSingle(),
+    sb.from('profiles').select('is_admin,username,top_tabs,account_type,company,show_early_start,show_line_numbers').eq('id', effectiveUserId()).maybeSingle(),
     sb.from('category_companies').select('*'),
     sb.from('user_block_access').select('*').eq('user_id', effectiveUserId())
   ]);
-  // account_type/company/show_early_start are newer columns — fall back
-  // gracefully until the db-setup.sql migration for them has been run,
-  // rather than losing is_admin/username/top_tabs for everyone meanwhile.
-  if(profileRes.error && /column|account_type|company|show_early_start/i.test(profileRes.error.message || '')){
+  // account_type/company/show_early_start/show_line_numbers are newer
+  // columns — fall back gracefully until the db-setup.sql migration for
+  // them has been run, rather than losing is_admin/username/top_tabs for
+  // everyone meanwhile.
+  if(profileRes.error && /column|account_type|company|show_early_start|show_line_numbers/i.test(profileRes.error.message || '')){
     const retry = await sb.from('profiles').select('is_admin,username,top_tabs').eq('id', effectiveUserId()).maybeSingle();
     profileRes.data = retry.data;
     profileRes.error = retry.error;
@@ -3364,6 +3409,8 @@ async function loadAccountData(){
   applyAccountType();
   showEarlyStart = !!(profileRes.data && profileRes.data.show_early_start);
   document.getElementById('show-early-start-toggle').checked = showEarlyStart;
+  showLineNumbers = !!(profileRes.data && profileRes.data.show_line_numbers);
+  document.getElementById('show-line-numbers-toggle').checked = showLineNumbers;
   myUsername = (profileRes.data && profileRes.data.username) || '';
   // Self-heal: if a username was chosen at signup (stored in auth metadata) but the
   // profile row doesn't have it yet, write it now. Only makes sense for the real
@@ -3409,23 +3456,26 @@ async function loadAccountData(){
     if(pattern.length !== weeks*7){
       pattern = resizePatternArray(pattern, weeks);
     }
+    rotaTemplateId = rotaRes.data.rota_template_id || null;
   } else {
     rotaStart = '';
     weeks = 5;
     weekStartDay = 0;
     pattern = Array(35).fill('');
+    rotaTemplateId = null;
   }
-  baseRota = { rota_start: rotaStart, weeks: weeks, week_start_day: weekStartDay, pattern: [...pattern] };
+  baseRota = { rota_start: rotaStart, weeks: weeks, week_start_day: weekStartDay, pattern: [...pattern], rota_template_id: rotaTemplateId };
   // A scheduled rota change (see confirmApplyRotaTemplate()) whose start
   // date has since arrived becomes the base rota from here on, so "the
   // original rota" view catches up instead of staying on the pre-change
   // pattern forever.
   if(promoteDueRotaSchedule()){
     rotaStart = baseRota.rota_start; weeks = baseRota.weeks; weekStartDay = baseRota.week_start_day;
-    pattern = [...baseRota.pattern];
+    pattern = [...baseRota.pattern]; rotaTemplateId = baseRota.rota_template_id;
     sb.from('rota_settings').upsert({
       user_id: effectiveUserId(), rota_start: baseRota.rota_start, weeks: baseRota.weeks,
       week_start_day: baseRota.week_start_day, original_pattern: baseRota.pattern,
+      rota_template_id: baseRota.rota_template_id || null,
       schedule: rotaSchedule, updated_at: new Date().toISOString()
     });
   }
@@ -4585,7 +4635,14 @@ function renderOriginalGrid(){
   const grid = document.getElementById('original-grid');
   if(!grid) return;
   const titleEl = document.getElementById('original-pattern-title');
-  if(titleEl) titleEl.textContent = weeks + '-week ' + (accountType === 'education' ? 'timetable' : 'pattern');
+  if(titleEl){
+    let title = weeks + '-week ' + (accountType === 'education' ? 'timetable' : 'pattern');
+    if(showLineNumbers && rotaTemplateId){
+      const rt = rotaTemplates.find(t => t.id === rotaTemplateId);
+      if(rt && rt.line_number) title += ' · Line ' + rt.line_number;
+    }
+    titleEl.textContent = title;
+  }
   grid.innerHTML = '';
   grid.className = 'grid';
   for(let w=0; w<weeks; w++){
@@ -5057,8 +5114,8 @@ function dateKeyLocal(d){
 
 // Pick the rota version in effect on a date: the latest scheduled change whose
 // effective_from is on or before the date, else the base rota.
-function resolveRotaForDate(baseStart, baseWeeks, basePattern, schedule, dateStr){
-  let v = { rota_start: baseStart, weeks: baseWeeks, pattern: basePattern };
+function resolveRotaForDate(baseStart, baseWeeks, basePattern, schedule, dateStr, baseTemplateId){
+  let v = { rota_start: baseStart, weeks: baseWeeks, pattern: basePattern, rota_template_id: baseTemplateId || null };
   if(Array.isArray(schedule)){
     let best = null;
     for(const s of schedule){
@@ -5066,7 +5123,7 @@ function resolveRotaForDate(baseStart, baseWeeks, basePattern, schedule, dateStr
         if(!best || s.effective_from > best.effective_from) best = s;
       }
     }
-    if(best) v = { rota_start: best.rota_start, weeks: best.weeks, pattern: best.pattern };
+    if(best) v = { rota_start: best.rota_start, weeks: best.weeks, pattern: best.pattern, rota_template_id: best.rota_template_id || null };
   }
   return v;
 }
@@ -5106,7 +5163,7 @@ function promoteDueRotaSchedule(){
   if(!due.length) return false;
   due.sort((a,b) => a.effective_from < b.effective_from ? -1 : 1);
   const winner = due[due.length - 1];
-  baseRota = { rota_start: winner.rota_start, weeks: winner.weeks, week_start_day: winner.week_start_day, pattern: winner.pattern };
+  baseRota = { rota_start: winner.rota_start, weeks: winner.weeks, week_start_day: winner.week_start_day, pattern: winner.pattern, rota_template_id: winner.rota_template_id || null };
   rotaSchedule = rotaSchedule.filter(s => !(s && s.effective_from && s.effective_from <= todayKey));
   return true;
 }
@@ -5128,8 +5185,23 @@ function shiftFromRotaVersions(baseStart, baseWeeks, basePattern, schedule, date
 // scheduled version is loaded, use the saved base snapshot.
 function calendarBaseRota(){
   return editingRotaVersion === null
-    ? { rota_start: rotaStart, weeks: weeks, pattern: pattern }
-    : { rota_start: baseRota.rota_start, weeks: baseRota.weeks, pattern: baseRota.pattern };
+    ? { rota_start: rotaStart, weeks: weeks, pattern: pattern, rota_template_id: rotaTemplateId }
+    : { rota_start: baseRota.rota_start, weeks: baseRota.weeks, pattern: baseRota.pattern, rota_template_id: baseRota.rota_template_id };
+}
+
+// The line number (free text, e.g. "4") of whichever rota template the
+// version in effect on dateStr was last applied from — '' if there isn't
+// one, the account hasn't turned line numbers on, or that template has no
+// line number set. See confirmApplyRotaTemplate() for where
+// rota_template_id gets set, and the Account tab's "Show line numbers"
+// toggle for showLineNumbers.
+function lineNumberForDate(dateStr){
+  if(!showLineNumbers) return '';
+  const b = calendarBaseRota();
+  const v = resolveRotaForDate(b.rota_start, b.weeks, b.pattern, rotaSchedule, dateStr, b.rota_template_id);
+  if(!v.rota_template_id) return '';
+  const rt = rotaTemplates.find(t => t.id === v.rota_template_id);
+  return (rt && rt.line_number) ? String(rt.line_number) : '';
 }
 
 function patternShiftForDate(dateStr){
@@ -5366,6 +5438,7 @@ function renderCalendarTab(){
     const isBankHoliday = bankHolidays.has(key);
     const ov = allOverrides.find(o => o.override_date === key);
     const dayPay = payRates.enabled ? shifts.reduce((sum, s) => sum + shiftPay(s, cursor.getDay()), 0) : 0;
+    const lineNum = shifts.length ? lineNumberForDate(key) : '';
 
     if(viewMode === 'list'){
       const row = document.createElement('div');
@@ -5378,7 +5451,7 @@ function renderCalendarTab(){
         label += ' — <span class="cal-shift-name">Holiday</span>';
       } else if(shifts.length){
         swatch = shifts.map(s => '<span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:' + (s.color||'#F2A93B') + ';margin-right:4px;"></span>').join('');
-        label += ' — <span class="cal-shift-name">' + escapeHtml(dayNamePrefix(ov) + multiShiftNameLabel(shifts)) + '</span>' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true));
+        label += ' — <span class="cal-shift-name">' + escapeHtml(dayNamePrefix(ov) + multiShiftNameLabel(shifts) + (lineNum ? ' · Line ' + lineNum : '')) + '</span>' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true));
         if(payRates.enabled) label += ' (£' + dayPay.toFixed(2) + ')';
       } else {
         label += ' — <span class="cal-shift-name">RD</span>';
@@ -5428,7 +5501,7 @@ function renderCalendarTab(){
       } else if(shifts.length){
         cell.style.background = multiShiftBackground(shifts);
         cell.style.color = '#203143';
-        inner += '<span class="cal-grid-name">' + escapeHtml(dayNamePrefix(ov) + multiShiftNameLabel(shifts)) + '</span><span class="pay-line">' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true)) + (payRates.enabled ? ' £'+dayPay.toFixed(2) : '') + '</span>';
+        inner += '<span class="cal-grid-name">' + escapeHtml(dayNamePrefix(ov) + multiShiftNameLabel(shifts) + (lineNum ? ' · L' + lineNum : '')) + '</span><span class="pay-line">' + escapeHtml(multiShiftDisplayTimeLabel(shifts, true)) + (payRates.enabled ? ' £'+dayPay.toFixed(2) : '') + '</span>';
       } else {
         inner += '<span class="cal-grid-name">RD</span>';
       }
@@ -5687,7 +5760,7 @@ function onAnchorChange(){
 
 // ---------- Scheduled rota versions ----------
 function snapshotEditorRota(){
-  return { rota_start: rotaStart, weeks: weeks, week_start_day: weekStartDay, pattern: [...pattern] };
+  return { rota_start: rotaStart, weeks: weeks, week_start_day: weekStartDay, pattern: [...pattern], rota_template_id: rotaTemplateId };
 }
 
 function loadRotaIntoEditor(v){
@@ -5695,6 +5768,7 @@ function loadRotaIntoEditor(v){
   weeks = v.weeks || 5;
   weekStartDay = (v.week_start_day != null) ? v.week_start_day : 0;
   pattern = resizePatternArray((v.pattern || []).slice(), weeks);
+  rotaTemplateId = v.rota_template_id || null;
   document.getElementById('rota-start').value = rotaStart;
   document.getElementById('weeks-select').value = String(weeks);
   document.getElementById('week-start-day').value = String(weekStartDay);
@@ -5755,7 +5829,7 @@ function addScheduledRotaChange(){
   if(editingRotaVersion === null){ baseRota = snapshotEditorRota(); }
   else { const cur = rotaSchedule.find(s => s.effective_from === editingRotaVersion); if(cur) Object.assign(cur, snapshotEditorRota()); }
   // New version seeded from the current base rota so there's something to adjust
-  const seed = { effective_from: date, rota_start: baseRota.rota_start, weeks: baseRota.weeks, week_start_day: baseRota.week_start_day, pattern: [...baseRota.pattern] };
+  const seed = { effective_from: date, rota_start: baseRota.rota_start, weeks: baseRota.weeks, week_start_day: baseRota.week_start_day, pattern: [...baseRota.pattern], rota_template_id: baseRota.rota_template_id || null };
   rotaSchedule = rotaSchedule.filter(s => s.effective_from !== date).concat([seed]);
   editingRotaVersion = date;
   loadRotaIntoEditor(seed);
@@ -5785,6 +5859,7 @@ async function persistRota(statusEl, successMsg){
     weeks: baseRota.weeks,
     week_start_day: baseRota.week_start_day,
     original_pattern: baseRota.pattern,
+    rota_template_id: baseRota.rota_template_id || null,
     updated_at: new Date().toISOString()
   };
   // Always included (even empty) so a schedule that's been fully promoted
@@ -5797,6 +5872,8 @@ async function persistRota(statusEl, successMsg){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = /schedule/i.test(error.message)
       ? 'Scheduled changes need a one-off database update — run: alter table public.rota_settings add column if not exists schedule jsonb;'
+      : /rota_template_id/i.test(error.message)
+      ? 'Line numbers need a one-off database update — run the rota_template_id column change from db-setup.sql.'
       : error.message;
     return false;
   }
@@ -6358,7 +6435,8 @@ async function saveRotaTemplate(){
     category: '__rota__', color: '#43C6AC',
     all_day: true, start_time: '', end_time: '', paid_hours: '',
     legs_data: { weeks: rtplWeeks, week_start_day: wsd, pattern: [...rtplPattern] },
-    allowed_days: [true,true,true,true,true,true,true]
+    allowed_days: [true,true,true,true,true,true,true],
+    line_number: document.getElementById('rtpl-line-number').value.trim() || null
   };
   let result;
   if(editingRtpl){
@@ -6367,7 +6445,13 @@ async function saveRotaTemplate(){
     result = await sb.from('shift_types').insert(payload).select().single();
   }
   const { data, error } = result;
-  if(error){ statusEl.style.color='var(--danger)'; statusEl.textContent=error.message; return; }
+  if(error){
+    statusEl.style.color='var(--danger)';
+    statusEl.textContent = /column|line_number/i.test(error.message)
+      ? 'Line numbers need a one-off database update — run the line_number column change from db-setup.sql.'
+      : error.message;
+    return;
+  }
   if(editingRtpl){
     rotaTemplates = rotaTemplates.map(r => r.id===data.id ? data : r);
   } else {
@@ -6385,6 +6469,7 @@ function startEditRotaTemplate(rtpl){
   editingRtpl = rtpl.id;
   document.getElementById('rtpl-name').value = rtpl.name;
   document.getElementById('rtpl-desc-text').value = rtpl.description || '';
+  document.getElementById('rtpl-line-number').value = rtpl.line_number || '';
   const ld = rtpl.legs_data || {};
   rtplWeeks = ld.weeks || 5;
   rtplPattern = (ld.pattern || []).slice();
@@ -6402,6 +6487,7 @@ function cancelRotaTemplateEdit(){
   editingRtpl = null;
   document.getElementById('rtpl-name').value = '';
   document.getElementById('rtpl-desc-text').value = '';
+  document.getElementById('rtpl-line-number').value = '';
   rtplWeeks = 5;
   rtplPattern = Array(35).fill('');
   document.getElementById('rtpl-weeks').value = '5';
@@ -6595,7 +6681,7 @@ async function confirmApplyRotaTemplate(){
   // rota below, so both My Calendar and the Setup/Rota tab's default view
   // agree on it straight away rather than only the date-aware calendar
   // reflecting it until the date naturally passes.
-  const seed = { effective_from: anchorDate, rota_start: newRotaStart, weeks: newWeeks, week_start_day: wsd, pattern: newPattern };
+  const seed = { effective_from: anchorDate, rota_start: newRotaStart, weeks: newWeeks, week_start_day: wsd, pattern: newPattern, rota_template_id: rtpl.id };
   rotaSchedule = rotaSchedule.filter(s => s.effective_from !== anchorDate).concat([seed]);
   const promoted = promoteDueRotaSchedule();
   if(promoted){
