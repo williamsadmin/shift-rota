@@ -355,3 +355,19 @@ create policy "Admins can manage announcements" on public.announcements
   for all using (public.is_admin())
   with check (public.is_admin());
 alter table public.profiles add column if not exists show_early_start boolean not null default false;
+
+-- ---------------------------------------------------------------------
+-- 14. Rota template "line numbers" + which one an account's rota currently
+--     reflects. A rota template (a shift_types row with category='__rota__')
+--     optionally gets a line_number (free text, e.g. "4" — the bus-scheduling
+--     sense of "line": a named, repeating roster sequence, not a UI line).
+--     rota_settings.rota_template_id tracks which rota template the
+--     account's current base rota (or a scheduled change — see the
+--     "schedule" column above) was last applied from, set by
+--     confirmApplyRotaTemplate() in index.html, so My Calendar / the Rota
+--     tab can show "Line 4" next to a working day. Only shown for accounts
+--     with profiles.show_line_numbers on (Account tab).
+-- ---------------------------------------------------------------------
+alter table public.shift_types add column if not exists line_number text;
+alter table public.rota_settings add column if not exists rota_template_id uuid;
+alter table public.profiles add column if not exists show_line_numbers boolean not null default false;
