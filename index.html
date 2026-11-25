@@ -5440,6 +5440,7 @@ function renderCalendarTab(){
     const ov = allOverrides.find(o => o.override_date === key);
     const dayPay = payRates.enabled ? shifts.reduce((sum, s) => sum + shiftPay(s, cursor.getDay()), 0) : 0;
     const lineNum = shifts.length ? lineNumberForDate(key) : '';
+    const dayAnnouncements = announcementsForDate(key);
 
     if(viewMode === 'list'){
       const row = document.createElement('div');
@@ -5461,6 +5462,7 @@ function renderCalendarTab(){
       if(ov && (ov.source === 'self_swap' || ov.source === 'friend_swap')) label += ' ⇄ changed';
       if(ov && ov.tentative) label += ' ⏳';
       if(isToday) label += ' <span style="color:var(--teal);font-weight:600;">· Today</span>';
+      dayAnnouncements.forEach(a => { label += '<br>📢 <span style="color:var(--amber);">' + escapeHtml(a.message) + '</span>'; });
       row.style.cursor = 'pointer';
       row.onclick = ()=>showDayDetail(key);
       row.innerHTML = '<span>' + swatch + label + '</span>';
@@ -5489,7 +5491,8 @@ function renderCalendarTab(){
       // A long shift name is truncated with an ellipsis in the cell itself
       // (.cal-grid-name's CSS) — the full name shows on hover here, and in
       // full detail (with times/description) when the cell is tapped.
-      cell.title = cursor.toLocaleDateString() + (shifts.length ? ' — ' + dayNamePrefix(ov) + multiShiftNameLabel(shifts) : '');
+      cell.title = cursor.toLocaleDateString() + (shifts.length ? ' — ' + dayNamePrefix(ov) + multiShiftNameLabel(shifts) : '')
+        + (dayAnnouncements.length ? ' — 📢 ' + dayAnnouncements.map(a => a.message).join(' · ') : '');
       cell.style.cursor = 'pointer';
       cell.onclick = ()=>showDayDetail(key);
       if(isBankHoliday) cell.style.outline = '2px solid var(--amber)';
@@ -5507,6 +5510,7 @@ function renderCalendarTab(){
         inner += '<span class="cal-grid-name">RD</span>';
       }
       if(ov && (ov.source === 'self_swap' || ov.source === 'friend_swap')) inner += '<span class="pay-line">⇄</span>';
+      if(dayAnnouncements.length) inner += '<span class="pay-line">📢</span>';
       cell.innerHTML = inner;
       gridEl.appendChild(cell);
     }
@@ -6988,6 +6992,16 @@ function renderAnnouncementBanner(){
   if(!active.length){ banner.style.display = 'none'; return; }
   banner.style.display = 'block';
   list.innerHTML = active.map(a => '<div style="padding:3px 0;">📢 <strong>' + escapeHtml(a.message) + '</strong></div>').join('');
+}
+
+// Announcements that actually cover this specific date (unlike the top
+// banner, which shows from the moment one's posted — see
+// renderAnnouncementBanner() — this is the "flag it on the days it's
+// assigned to" marker shown per-day in My Calendar).
+function announcementsForDate(dateStr){
+  return allAnnouncements.filter(a =>
+    a.start_date <= dateStr && a.end_date >= dateStr && (!a.company || a.company === myCompany)
+  );
 }
 
 // Posts a new announcement, or — while editingAnnouncementId is set via
