@@ -359,16 +359,20 @@ alter table public.profiles add column if not exists show_early_start boolean no
 -- ---------------------------------------------------------------------
 -- 14. Rota template "line numbers" + which one an account's rota currently
 --     reflects. A rota template (a shift_types row with category='__rota__')
---     optionally gets a line_number (free text, e.g. "4" — the bus-scheduling
---     sense of "line": a named, repeating roster sequence, not a UI line).
+--     optionally gets a line number per WEEK of its pattern (free text,
+--     e.g. "3217" — the bus-scheduling sense of "line": a named, repeating
+--     roster sequence, not a UI line) — stored as legs_data.line_numbers,
+--     a JSONB array parallel to legs_data.pattern/weeks, not a separate
+--     column (legs_data is already schema-less JSONB; see section 16 below,
+--     which drops the earlier one-value-per-template column this replaced).
 --     rota_settings.rota_template_id tracks which rota template the
 --     account's current base rota (or a scheduled change — see the
 --     "schedule" column above) was last applied from, set by
 --     confirmApplyRotaTemplate() in index.html, so My Calendar / the Rota
---     tab can show "Line 4" next to a working day. Only shown for accounts
---     with profiles.show_line_numbers on (Account tab).
+--     tab can show "Line 3217" next to a working day, picking the number
+--     for whichever week of the template that date falls in. Only shown
+--     for accounts with profiles.show_line_numbers on (Account tab).
 -- ---------------------------------------------------------------------
-alter table public.shift_types add column if not exists line_number text;
 alter table public.rota_settings add column if not exists rota_template_id uuid;
 alter table public.profiles add column if not exists show_line_numbers boolean not null default false;
 
@@ -384,3 +388,10 @@ alter table public.profiles add column if not exists show_line_numbers boolean n
 --     null means "just use the real calendar weekday" (the normal case).
 -- ---------------------------------------------------------------------
 alter table public.overrides add column if not exists effective_weekday smallint;
+
+-- ---------------------------------------------------------------------
+-- 16. Line numbers moved from one text value per rota template to one per
+--     week of its pattern (see section 14) — stored in legs_data.line_numbers
+--     instead. Drops the now-unused column this replaced.
+-- ---------------------------------------------------------------------
+alter table public.shift_types drop column if exists line_number;

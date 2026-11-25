@@ -802,13 +802,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         <div class="row">
           <div><label>Description (optional)</label><input type="text" id="rtpl-desc-text" placeholder="e.g. Mon–Sat mixed duties, depot A"></div>
         </div>
-        <div class="row">
-          <div style="max-width:160px;">
-            <label>Line number (optional)</label>
-            <input type="text" id="rtpl-line-number" placeholder="e.g. 4">
-          </div>
-        </div>
-        <p class="help" style="margin-top:0;">If set, anyone with "Show line numbers" on (Account tab) sees it next to working days once they apply this rota template.</p>
+        <p class="help" style="margin-top:0;">Each week below can have its own line number (optional) — set it in the week's own row. Anyone with "Show line numbers" on (Account tab) sees it next to working days once they apply this rota template.</p>
         <div class="row">
           <div style="max-width:200px;">
             <label>Pattern length (weeks)</label>
@@ -1279,6 +1273,9 @@ let adminEditCal = null;  // { userId, rota, overrides, shiftTypes } — editing
 // Rota template builder state (admin only)
 let rtplWeeks = 5;
 let rtplPattern = Array(35).fill('');
+// One line number per week of the template (parallel to rtplWeeks, not
+// rtplPattern) — see legs_data.line_numbers in saveRotaTemplate().
+let rtplLineNumbers = Array(5).fill('');
 let editingRtpl = null;
 
 function friendLabel(p){
@@ -3941,8 +3938,8 @@ document.getElementById('tpl-allday') && document.getElementById('tpl-allday').a
   document.getElementById('tpl-time-row').style.display = e.target.checked ? 'none' : 'flex';
 });
 
-function resizePatternArray(arr, newWeeks){
-  const newLen = newWeeks * 7;
+function resizePatternArray(arr, newWeeks, itemsPerWeek){
+  const newLen = newWeeks * (itemsPerWeek || 7);
   const copy = arr.slice(0, newLen);
   while(copy.length < newLen) copy.push('');
   return copy;
@@ -3952,9 +3949,10 @@ function resizePatternArray(arr, newWeeks){
 // week indexes) in a flat pattern array, shifting the weeks between them to
 // fill the gap. Used by every rota-pattern editor (personal Setup tab, admin
 // per-user grid, rota-template builder).
-function moveWeekInPatternArr(arr, fromIdx, toIdx){
+function moveWeekInPatternArr(arr, fromIdx, toIdx, itemsPerWeek){
+  itemsPerWeek = itemsPerWeek || 7;
   const weeksArr = [];
-  for(let i=0; i<arr.length; i+=7) weeksArr.push(arr.slice(i, i+7));
+  for(let i=0; i<arr.length; i+=itemsPerWeek) weeksArr.push(arr.slice(i, i+itemsPerWeek));
   const [moved] = weeksArr.splice(fromIdx, 1);
   weeksArr.splice(toIdx, 0, moved);
   return [].concat(...weeksArr);
@@ -4637,19 +4635,16 @@ function renderOriginalGrid(){
   if(!grid) return;
   const titleEl = document.getElementById('original-pattern-title');
   if(titleEl){
-    let title = weeks + '-week ' + (accountType === 'education' ? 'timetable' : 'pattern');
-    if(showLineNumbers && rotaTemplateId){
-      const rt = rotaTemplates.find(t => t.id === rotaTemplateId);
-      if(rt && rt.line_number) title += ' · Line ' + rt.line_number;
-    }
-    titleEl.textContent = title;
+    titleEl.textContent = weeks + '-week ' + (accountType === 'education' ? 'timetable' : 'pattern');
   }
+  const rt = (showLineNumbers && rotaTemplateId) ? rotaTemplates.find(t => t.id === rotaTemplateId) : null;
+  const weekLineNumbers = (rt && rt.legs_data && rt.legs_data.line_numbers) || [];
   grid.innerHTML = '';
   grid.className = 'grid';
   for(let w=0; w<weeks; w++){
     const marker = document.createElement('div');
     marker.className = 'week-marker';
-    marker.textContent = 'Week ' + (w+1);
+    marker.textContent = 'Week ' + (w+1) + (weekLineNumbers[w] ? ' · Line ' + weekLineNumbers[w] : '');
     grid.appendChild(marker);
     getDayLabels().forEach(d=>{
       const lbl = document.createElement('div');
@@ -5190,19 +5185,29 @@ function calendarBaseRota(){
     : { rota_start: baseRota.rota_start, weeks: baseRota.weeks, pattern: baseRota.pattern, rota_template_id: baseRota.rota_template_id };
 }
 
-// The line number (free text, e.g. "4") of whichever rota template the
-// version in effect on dateStr was last applied from — '' if there isn't
-// one, the account hasn't turned line numbers on, or that template has no
-// line number set. See confirmApplyRotaTemplate() for where
-// rota_template_id gets set, and the Account tab's "Show line numbers"
-// toggle for showLineNumbers.
+// The line number (free text, e.g. "4") of whichever WEEK of whichever rota
+// template the version in effect on dateStr was last applied from — each
+// week of a rota template can carry its own line number (legs_data.line_numbers,
+// parallel to legs_data.pattern, set per-week in the template builder).
+// Returns '' if there isn't one, the account hasn't turned line numbers on,
+// or that week has no line number set. See confirmApplyRotaTemplate() for
+// where rota_template_id gets set, and the Account tab's "Show line
+// numbers" toggle for showLineNumbers.
 function lineNumberForDate(dateStr){
   if(!showLineNumbers) return '';
   const b = calendarBaseRota();
   const v = resolveRotaForDate(b.rota_start, b.weeks, b.pattern, rotaSchedule, dateStr, b.rota_template_id);
-  if(!v.rota_template_id) return '';
+  if(!v.rota_template_id || !v.rota_start) return '';
   const rt = rotaTemplates.find(t => t.id === v.rota_template_id);
-  return (rt && rt.line_number) ? String(rt.line_number) : '';
+  const lineNumbers = (rt && rt.legs_data && rt.legs_data.line_numbers) || [];
+  if(!lineNumbers.length) return '';
+  const start = new Date(v.rota_start + 'T00:00:00');
+  const d = new Date(dateStr + 'T00:00:00');
+  const len = (v.weeks || 1) * 7;
+  let idx = Math.floor((d - start) / 86400000) % len;
+  if(idx < 0) idx += len;
+  const weekIdx = Math.floor(idx / 7);
+  return lineNumbers[weekIdx] ? String(lineNumbers[weekIdx]) : '';
 }
 
 function patternShiftForDate(dateStr){
@@ -6396,6 +6401,7 @@ async function syncTemplateCopies(){
 function changeRtplWeeks(){
   const newW = parseInt(document.getElementById('rtpl-weeks').value, 10);
   rtplPattern = resizePatternArray(rtplPattern, newW);
+  rtplLineNumbers = resizePatternArray(rtplLineNumbers, newW, 1);
   rtplWeeks = newW;
   renderRtplGrid();
 }
@@ -6403,6 +6409,7 @@ function changeRtplWeeks(){
 function moveWeekInRtplPattern(fromIdx, toIdx){
   if(fromIdx === toIdx) return;
   rtplPattern = moveWeekInPatternArr(rtplPattern, fromIdx, toIdx);
+  rtplLineNumbers = moveWeekInPatternArr(rtplLineNumbers, fromIdx, toIdx, 1);
   renderRtplGrid();
 }
 
@@ -6410,6 +6417,7 @@ function deleteWeekFromRtplPattern(weekIdx){
   if(rtplWeeks <= 1){ alert('This template needs at least 1 week.'); return; }
   if(!confirm('Delete Week ' + (weekIdx+1) + ' from this template? Every week after it shifts up by one. This doesn\'t save until you save the template.')) return;
   rtplPattern.splice(weekIdx * 7, 7);
+  rtplLineNumbers.splice(weekIdx, 1);
   rtplWeeks -= 1;
   document.getElementById('rtpl-weeks').value = String(rtplWeeks);
   renderRtplGrid();
@@ -6439,11 +6447,22 @@ function renderRtplGrid(){
   const splitToggle = document.getElementById('rtpl-split-shifts-toggle');
   if(rtplPattern.some(v => splitShiftIds(v).length > 1)) splitToggle.checked = true; // reflect existing split days on load
   const splitMode = splitToggle.checked;
+  if(rtplLineNumbers.length !== rtplWeeks) rtplLineNumbers = resizePatternArray(rtplLineNumbers, rtplWeeks, 1);
   for(let w=0; w<rtplWeeks; w++){
     const marker = document.createElement('div');
     marker.className = 'week-marker';
     marker.style.cssText += 'display:flex;align-items:center;justify-content:space-between;gap:8px;';
-    const markerLabel = document.createElement('span'); markerLabel.textContent = 'Week ' + (w+1); marker.appendChild(markerLabel);
+    const leftGroup = document.createElement('span');
+    leftGroup.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    const markerLabel = document.createElement('span'); markerLabel.textContent = 'Week ' + (w+1); leftGroup.appendChild(markerLabel);
+    const lineInput = document.createElement('input');
+    lineInput.type = 'text';
+    lineInput.placeholder = 'Line no.';
+    lineInput.value = rtplLineNumbers[w] || '';
+    lineInput.style.cssText = 'width:80px;';
+    lineInput.addEventListener('input', () => { rtplLineNumbers[w] = lineInput.value.trim(); });
+    leftGroup.appendChild(lineInput);
+    marker.appendChild(leftGroup);
     if(rtplWeeks > 1){
       marker.appendChild(buildWeekReorderControls(w, rtplWeeks, moveWeekInRtplPattern, deleteWeekFromRtplPattern));
     }
@@ -6492,9 +6511,8 @@ async function saveRotaTemplate(){
     description: document.getElementById('rtpl-desc-text').value.trim(),
     category: '__rota__', color: '#43C6AC',
     all_day: true, start_time: '', end_time: '', paid_hours: '',
-    legs_data: { weeks: rtplWeeks, week_start_day: wsd, pattern: [...rtplPattern] },
-    allowed_days: [true,true,true,true,true,true,true],
-    line_number: document.getElementById('rtpl-line-number').value.trim() || null
+    legs_data: { weeks: rtplWeeks, week_start_day: wsd, pattern: [...rtplPattern], line_numbers: [...rtplLineNumbers] },
+    allowed_days: [true,true,true,true,true,true,true]
   };
   let result;
   if(editingRtpl){
@@ -6505,9 +6523,7 @@ async function saveRotaTemplate(){
   const { data, error } = result;
   if(error){
     statusEl.style.color='var(--danger)';
-    statusEl.textContent = /column|line_number/i.test(error.message)
-      ? 'Line numbers need a one-off database update — run the line_number column change from db-setup.sql.'
-      : error.message;
+    statusEl.textContent = error.message;
     return;
   }
   if(editingRtpl){
@@ -6527,11 +6543,12 @@ function startEditRotaTemplate(rtpl){
   editingRtpl = rtpl.id;
   document.getElementById('rtpl-name').value = rtpl.name;
   document.getElementById('rtpl-desc-text').value = rtpl.description || '';
-  document.getElementById('rtpl-line-number').value = rtpl.line_number || '';
   const ld = rtpl.legs_data || {};
   rtplWeeks = ld.weeks || 5;
   rtplPattern = (ld.pattern || []).slice();
   if(rtplPattern.length !== rtplWeeks*7) rtplPattern = resizePatternArray(rtplPattern, rtplWeeks);
+  rtplLineNumbers = (ld.line_numbers || []).slice();
+  if(rtplLineNumbers.length !== rtplWeeks) rtplLineNumbers = resizePatternArray(rtplLineNumbers, rtplWeeks, 1);
   document.getElementById('rtpl-weeks').value = String(rtplWeeks);
   document.getElementById('rtpl-week-start').value = String(ld.week_start_day || 0);
   document.getElementById('rtpl-split-shifts-toggle').checked = false;
@@ -6545,9 +6562,9 @@ function cancelRotaTemplateEdit(){
   editingRtpl = null;
   document.getElementById('rtpl-name').value = '';
   document.getElementById('rtpl-desc-text').value = '';
-  document.getElementById('rtpl-line-number').value = '';
   rtplWeeks = 5;
   rtplPattern = Array(35).fill('');
+  rtplLineNumbers = Array(5).fill('');
   document.getElementById('rtpl-weeks').value = '5';
   document.getElementById('rtpl-week-start').value = '0';
   document.getElementById('rtpl-split-shifts-toggle').checked = false;
@@ -6577,21 +6594,23 @@ let pendingRotaTemplateApply = null;
 // onCellClick(dateKey, weekNum)). shiftsArr resolves the ids in `pattern` —
 // the shared template pool by default (rota templates reference those ids),
 // or a specific user's own shift types when previewing their actual rota.
-function renderRtplPreviewGrid(containerId, pattern, weeksN, wsd, rotaStartForPreview, shiftsArr, onCellClick){
+function renderRtplPreviewGrid(containerId, pattern, weeksN, wsd, rotaStartForPreview, shiftsArr, onCellClick, lineNumbers){
   const el = document.getElementById(containerId);
   if(!el) return;
   shiftsArr = shiftsArr || templates;
+  lineNumbers = lineNumbers || [];
   el.innerHTML = '';
   const labels = DAY_LABELS.slice(wsd).concat(DAY_LABELS.slice(0, wsd));
   const startDate = rotaStartForPreview ? new Date(rotaStartForPreview + 'T00:00:00') : null;
   for(let w = 0; w < weeksN; w++){
     const marker = document.createElement('div');
     marker.className = 'week-marker';
+    const lineSuffix = lineNumbers[w] ? ' · Line ' + lineNumbers[w] : '';
     if(startDate){
       const weekStart = new Date(startDate); weekStart.setDate(weekStart.getDate() + w*7);
-      marker.textContent = weekStart.toLocaleDateString(undefined, {day:'numeric', month:'short'});
+      marker.textContent = weekStart.toLocaleDateString(undefined, {day:'numeric', month:'short'}) + lineSuffix;
     } else {
-      marker.textContent = 'Week ' + (w+1);
+      marker.textContent = 'Week ' + (w+1) + lineSuffix;
     }
     el.appendChild(marker);
     labels.forEach(d=>{
@@ -6636,7 +6655,7 @@ function renderRtplPreviewGrid(containerId, pattern, weeksN, wsd, rotaStartForPr
 function viewRotaTemplate(rtpl){
   const ld = rtpl.legs_data || {};
   document.getElementById('rtpl-view-name').textContent = 'Viewing "' + rtpl.name + '"';
-  renderRtplPreviewGrid('rtpl-view-grid', ld.pattern || [], ld.weeks || 5, ld.week_start_day || 0, null);
+  renderRtplPreviewGrid('rtpl-view-grid', ld.pattern || [], ld.weeks || 5, ld.week_start_day || 0, null, null, null, ld.line_numbers || []);
   const box = document.getElementById('rtpl-view-box');
   box.style.display = 'block';
   box.scrollIntoView({behavior:'smooth', block:'start'});
@@ -6684,7 +6703,7 @@ function onRtplApplyAnchorChange(){
   const anchorDate = document.getElementById('rtpl-apply-anchor-date').value;
   const anchorWeek = parseInt(document.getElementById('rtpl-apply-anchor-week').value, 10) || 1;
   const rotaStartForPreview = anchorDate ? computeRotaStartFromAnchor(anchorDate, anchorWeek, wsd) : null;
-  renderRtplPreviewGrid('rtpl-apply-preview-grid', ld.pattern || [], weeksN, wsd, rotaStartForPreview, templates, setRtplApplyAnchorFromPreview);
+  renderRtplPreviewGrid('rtpl-apply-preview-grid', ld.pattern || [], weeksN, wsd, rotaStartForPreview, templates, setRtplApplyAnchorFromPreview, ld.line_numbers || []);
 }
 
 function setRtplApplyAnchorFromPreview(dateKey, weekNum){
