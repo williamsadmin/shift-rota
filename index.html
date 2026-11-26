@@ -1266,6 +1266,12 @@ let profileCache = {}; // id -> profile, for display
 let allProfiles = []; // every other user's profile, for the People list
 let pinnedIds = new Set(); // ids of users I've starred
 let myCompany = null, myLocation = null;             // the current user's approved workplace
+// Which tab to switch back to after saving/cancelling a shared-template edit
+// (shift template or rota template) started from somewhere other than Admin
+// Templates — e.g. the Edit button on the Templates tab's own browse list.
+// null means "stay on Admin Templates" (editing started there, or wasn't via
+// one of those Edit buttons). See startEditTemplate()/startEditRotaTemplate().
+let templateEditReturnTab = null;
 let myUsername = ''; // the current user's own username, e.g. for building their tracker link
 let myPendingCompany = null, myPendingLocation = null; // their outstanding join request
 let categoryCompanyMap = {}; // shift-template category -> [companies allowed to see it]
@@ -3195,6 +3201,11 @@ function switchTab(tab){
   closeMenu();
 }
 
+function currentTabName(){
+  const active = document.querySelector('.tab-panel.active');
+  return active ? active.id.replace('tab-', '') : null;
+}
+
 function toggleMenu(){
   const panel = document.getElementById('menu-panel');
   if(!panel) return;
@@ -3712,6 +3723,8 @@ function startEditShiftType(s){
 }
 
 function startEditTemplate(t){
+  const fromTab = currentTabName();
+  templateEditReturnTab = (fromTab && fromTab !== 'admintemplates') ? fromTab : null;
   switchTab('admintemplates');
   editingItem.tpl = t.id;
   document.getElementById('tpl-name').value = t.name;
@@ -3746,6 +3759,10 @@ function cancelEdit(prefix){
   renderLegRows(prefix);
   document.getElementById(prefix + '-submit-btn').textContent = prefix === 'st' ? 'Add shift type' : 'Create template';
   document.getElementById(prefix + '-cancel-btn').style.display = 'none';
+  if(prefix === 'tpl' && templateEditReturnTab){
+    switchTab(templateEditReturnTab);
+    templateEditReturnTab = null;
+  }
 }
 
 function renderTemplatesBrowseList(){
@@ -3917,7 +3934,8 @@ async function createTemplate(){
     statusEl.textContent = error.message;
     return;
   }
-  if(editingItem.tpl){
+  const wasEditing = !!editingItem.tpl;
+  if(wasEditing){
     templates = templates.map(t => t.id === data.id ? data : t);
     // Push changes to all unmodified user copies (those still linked via source_template_id)
     const syncPayload = {
@@ -3931,9 +3949,9 @@ async function createTemplate(){
     templates.push(data);
   }
   rememberColor(color);
-  cancelEdit('tpl');
+  cancelEdit('tpl'); // also returns to templateEditReturnTab, if the edit was started from there
   statusEl.style.color = 'var(--teal)';
-  statusEl.textContent = editingItem.tpl ? 'Template updated and synced to all unmodified copies.' : 'Template created.';
+  statusEl.textContent = wasEditing ? 'Template updated and synced to all unmodified copies.' : 'Template created.';
   renderTemplatesBrowseList();
   populateCopyFromSelects();
   if(isAdmin) renderAdminBlocksSection();
@@ -6554,6 +6572,8 @@ async function saveRotaTemplate(){
 }
 
 function startEditRotaTemplate(rtpl){
+  const fromTab = currentTabName();
+  templateEditReturnTab = (fromTab && fromTab !== 'admintemplates') ? fromTab : null;
   switchTab('admintemplates');
   editingRtpl = rtpl.id;
   document.getElementById('rtpl-name').value = rtpl.name;
@@ -6586,6 +6606,10 @@ function cancelRotaTemplateEdit(){
   renderRtplGrid();
   document.getElementById('rtpl-submit-btn').textContent = 'Create rota template';
   document.getElementById('rtpl-cancel-btn').style.display = 'none';
+  if(templateEditReturnTab){
+    switchTab(templateEditReturnTab);
+    templateEditReturnTab = null;
+  }
 }
 
 async function deleteRotaTemplate(id){
