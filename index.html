@@ -1182,6 +1182,11 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           <div><label>From date</label><input type="date" id="ann-start"></div>
           <div><label>To date</label><input type="date" id="ann-end"></div>
         </div>
+        <label class="checkbox-row"><input type="checkbox" id="ann-advance-toggle" onchange="onAnnAdvanceToggle()"> Show the banner in advance</label>
+        <div class="row" id="ann-advance-date-wrap" style="display:none;">
+          <div><label>Banner shows from</label><input type="date" id="ann-advance-date"></div>
+        </div>
+        <p class="help" style="margin-top:0;">Unchecked: the banner only shows during the dates above — same days it's flagged on in My Calendar. Checked: the banner also shows earlier, from the date you pick here, right up until the "To date" above.</p>
         <div><label>Message</label><textarea id="ann-message" placeholder="e.g. Christmas Day is a day off for everyone. 24 Dec - 1 Jan runs a Saturday service." style="min-height:70px;"></textarea></div>
         <button class="btn full" type="button" id="ann-submit-btn" onclick="createAnnouncement()">Post announcement</button>
         <button class="btn secondary full" type="button" id="ann-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelEditAnnouncement()">Cancel edit</button>
@@ -7043,14 +7048,16 @@ function renderAnnouncementBanner(){
   const list = document.getElementById('announcement-banner-list');
   if(!banner || !list) return;
   const todayKey = dateKeyLocal(new Date());
-  // Deliberately NOT gated on start_date <= today: the whole point is to
-  // give advance notice of a change, typically posted well before its own
-  // start date (e.g. a Christmas-period notice posted in November) — it
-  // should show from the moment it's posted right up until end_date passes,
-  // not only during the period it's announcing.
-  const active = allAnnouncements.filter(a =>
-    a.end_date >= todayKey && (!a.company || a.company === myCompany)
-  );
+  // Each announcement controls its own banner window via banner_start_date
+  // (the "Show the banner in advance" toggle in createAnnouncement()): with
+  // it set, the banner shows from that earlier date right through to
+  // end_date, same as giving advance notice of a change before its own
+  // period begins; with it null, the banner only shows start_date..end_date
+  // — the same window the per-day flag uses (see announcementsForDate()).
+  const active = allAnnouncements.filter(a => {
+    const lower = a.banner_start_date || a.start_date;
+    return lower <= todayKey && a.end_date >= todayKey && (!a.company || a.company === myCompany);
+  });
   if(!active.length){ banner.style.display = 'none'; return; }
   banner.style.display = 'block';
   list.innerHTML = active.map(a => '<div style="padding:3px 0;">📢 <strong>' + escapeHtml(a.message) + '</strong></div>').join('');
@@ -7066,6 +7073,11 @@ function announcementsForDate(dateStr){
   );
 }
 
+function onAnnAdvanceToggle(){
+  const checked = document.getElementById('ann-advance-toggle').checked;
+  document.getElementById('ann-advance-date-wrap').style.display = checked ? '' : 'none';
+}
+
 // Posts a new announcement, or — while editingAnnouncementId is set via
 // startEditAnnouncement() — saves changes to that existing one instead.
 async function createAnnouncement(){
@@ -7075,12 +7087,16 @@ async function createAnnouncement(){
   const startDate = document.getElementById('ann-start').value;
   const endDate = document.getElementById('ann-end').value;
   const message = document.getElementById('ann-message').value.trim();
+  const advanceChecked = document.getElementById('ann-advance-toggle').checked;
+  const bannerStartDate = advanceChecked ? document.getElementById('ann-advance-date').value : null;
   if(!message) return fail('Enter a message.');
   if(!startDate || !endDate) return fail('Pick a start and end date.');
   if(endDate < startDate) return fail('The end date is before the start date.');
+  if(advanceChecked && !bannerStartDate) return fail('Pick a date for the banner to start showing from, or uncheck "Show the banner in advance".');
+  if(advanceChecked && bannerStartDate > startDate) return fail('The banner start date must be on or before the "From date".');
   const editing = editingAnnouncementId;
   statusEl.style.color = 'var(--text-dim)'; statusEl.textContent = editing ? 'Saving…' : 'Posting…';
-  const payload = { company, message, start_date: startDate, end_date: endDate };
+  const payload = { company, message, start_date: startDate, end_date: endDate, banner_start_date: bannerStartDate };
   const { error } = editing
     ? await sb.from('announcements').update(payload).eq('id', editing)
     : await sb.from('announcements').insert(payload);
@@ -7088,11 +7104,13 @@ async function createAnnouncement(){
     statusEl.style.color = 'var(--danger)';
     statusEl.textContent = /relation|announcements|does not exist/i.test(error.message)
       ? 'Needs a one-off database update — run the announcements block from db-setup.sql.'
+      : /banner_start_date/i.test(error.message)
+      ? 'Advance notice needs a one-off database update — run the banner_start_date column change from db-setup.sql.'
       : error.message;
     return;
   }
   statusEl.style.color = 'var(--teal)'; statusEl.textContent = editing ? 'Saved.' : 'Posted.';
-  if(editing) cancelEditAnnouncement(); else document.getElementById('ann-message').value = '';
+  if(editing) cancelEditAnnouncement(); else { document.getElementById('ann-message').value = ''; document.getElementById('ann-advance-toggle').checked = false; onAnnAdvanceToggle(); }
   await loadAnnouncements();
   renderAdminAnnouncementsList();
 }
@@ -7106,6 +7124,9 @@ function startEditAnnouncement(a){
   document.getElementById('ann-start').value = a.start_date;
   document.getElementById('ann-end').value = a.end_date;
   document.getElementById('ann-message').value = a.message;
+  document.getElementById('ann-advance-toggle').checked = !!a.banner_start_date;
+  document.getElementById('ann-advance-date').value = a.banner_start_date || '';
+  onAnnAdvanceToggle();
   document.getElementById('ann-submit-btn').textContent = 'Save changes';
   document.getElementById('ann-cancel-btn').style.display = 'block';
   document.getElementById('ann-status').textContent = '';
@@ -7118,6 +7139,9 @@ function cancelEditAnnouncement(){
   document.getElementById('ann-start').value = '';
   document.getElementById('ann-end').value = '';
   document.getElementById('ann-message').value = '';
+  document.getElementById('ann-advance-toggle').checked = false;
+  document.getElementById('ann-advance-date').value = '';
+  onAnnAdvanceToggle();
   document.getElementById('ann-submit-btn').textContent = 'Post announcement';
   document.getElementById('ann-cancel-btn').style.display = 'none';
   document.getElementById('ann-status').textContent = '';
@@ -7132,7 +7156,9 @@ function renderAdminAnnouncementsList(){
     const div = document.createElement('div'); div.className = 'off-item';
     div.innerHTML = '<span><strong style="color:var(--text);">' + escapeHtml(a.message) + '</strong>'
       + '<br><span style="font-size:12px;color:var(--text-dim);">' + escapeHtml(a.company || 'Everyone')
-      + ' · ' + fmtDateLabel(a.start_date) + ' – ' + fmtDateLabel(a.end_date) + '</span></span>';
+      + ' · ' + fmtDateLabel(a.start_date) + ' – ' + fmtDateLabel(a.end_date)
+      + (a.banner_start_date ? ' · banner from ' + fmtDateLabel(a.banner_start_date) : ' · banner shows on the day only')
+      + '</span></span>';
     const btnGroup = document.createElement('span');
     const editBtn = document.createElement('button'); editBtn.textContent = 'Edit'; editBtn.style.color = 'var(--teal)';
     editBtn.onclick = () => startEditAnnouncement(a);

@@ -395,3 +395,15 @@ alter table public.overrides add column if not exists effective_weekday smallint
 --     instead. Drops the now-unused column this replaced.
 -- ---------------------------------------------------------------------
 alter table public.shift_types drop column if exists line_number;
+
+-- ---------------------------------------------------------------------
+-- 17. Per-announcement control over when its banner starts showing, set via
+--     the "Show the banner in advance" toggle (createAnnouncement() in
+--     index.html). null (the default — "day only"): the banner only shows
+--     during start_date..end_date, the same window the per-day 📢 flag uses
+--     (announcementsForDate()). Set: the banner instead shows from this
+--     earlier date right through to end_date, same idea as the original
+--     "give advance notice" banner behaviour, just with an explicit chosen
+--     date instead of showing from whenever it was posted.
+-- ---------------------------------------------------------------------
+alter table public.announcements add column if not exists banner_start_date date;
