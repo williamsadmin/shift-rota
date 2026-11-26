@@ -742,8 +742,32 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
       </section>
 
       <section id="template-create-section">
-        <p class="sec-title">Create a new template</p>
-        <p class="help" style="margin-top:0;margin-bottom:12px;">Everyone else just browses and adds.</p>
+        <p class="sec-title">Shift templates</p>
+        <p class="help" style="margin-top:0;margin-bottom:12px;">Everyone else just browses and adds from the Templates tab.</p>
+        <button class="btn full" type="button" onclick="startCreateTemplate()">+ Create a new template</button>
+      </section>
+
+      <section id="rota-template-create-section">
+        <p class="sec-title">Rota templates</p>
+        <p class="help" style="margin-top:0;margin-bottom:12px;">Build a full rota pattern from shared shift templates — anyone can apply it to their account instantly.</p>
+        <button class="btn full" type="button" onclick="startCreateRotaTemplate()">+ Create a new rota template</button>
+      </section>
+    </div>
+
+    <!-- Dedicated, decluttered screens for creating/editing one shift template or
+         rota template — not in the top tab bar or ☰ menu, reached only via the
+         buttons above or an Edit button on the Templates tab. See
+         startCreateTemplate()/startEditTemplate()/cancelEdit() and
+         startCreateRotaTemplate()/startEditRotaTemplate()/cancelRotaTemplateEdit(),
+         which track templateEditReturnTab to switch back to wherever this was
+         opened from once it's saved or cancelled. -->
+    <div class="tab-panel" id="tab-template-editor">
+      <header style="margin-bottom:16px;">
+        <p class="eyebrow">Admin Templates</p>
+        <h1 id="tpl-form-heading">Create a new template</h1>
+        <p class="sub">Everyone else just browses and adds from the Templates tab.</p>
+      </header>
+      <section>
         <div class="row">
           <div>
             <label>Copy from an existing template (optional)</label>
@@ -793,13 +817,18 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
           </div>
         </div>
         <button class="btn full" id="tpl-submit-btn" onclick="createTemplate()">Create template</button>
-        <button class="btn secondary full" id="tpl-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelEdit('tpl')">Cancel edit</button>
+        <button class="btn secondary full" id="tpl-cancel-btn" style="margin-top:8px;" onclick="cancelEdit('tpl')">Cancel</button>
         <div class="status" id="tpl-create-status"></div>
       </section>
+    </div>
 
-      <section id="rota-template-create-section">
-        <p class="sec-title">Create a rota template</p>
-        <p class="help" style="margin-top:0;margin-bottom:12px;">Build a full rota pattern from shared shift templates — anyone can apply it to their account instantly.</p>
+    <div class="tab-panel" id="tab-rota-template-editor">
+      <header style="margin-bottom:16px;">
+        <p class="eyebrow">Admin Templates</p>
+        <h1 id="rtpl-form-heading">Create a rota template</h1>
+        <p class="sub">Build a full rota pattern from shared shift templates — anyone can apply it to their account instantly.</p>
+      </header>
+      <section>
         <div class="row">
           <div><label>Template name</label><input type="text" id="rtpl-name" placeholder="e.g. Standard 5-week driver rota"></div>
         </div>
@@ -835,7 +864,7 @@ REST, IB15 1215-2058, IB15 1215-2058, IB18 1530-0138, IB16 1315-2138, IB16 1315-
         </div>
         <div id="rtpl-grid" style="margin-bottom:10px;"></div>
         <button class="btn full" id="rtpl-submit-btn" onclick="saveRotaTemplate()">Create rota template</button>
-        <button class="btn secondary full" id="rtpl-cancel-btn" style="display:none;margin-top:8px;" onclick="cancelRotaTemplateEdit()">Cancel edit</button>
+        <button class="btn secondary full" id="rtpl-cancel-btn" style="margin-top:8px;" onclick="cancelRotaTemplateEdit()">Cancel</button>
         <div class="status" id="rtpl-status"></div>
       </section>
     </div>
@@ -3722,10 +3751,23 @@ function startEditShiftType(s){
   document.getElementById('st-name').scrollIntoView({behavior:'smooth', block:'center'});
 }
 
+// Opens the dedicated template-editor tab (see tab-template-editor in the
+// HTML) for a brand new template — same form as editing, just starting
+// blank. Remembers whichever tab this was opened from (normally Admin
+// Templates, via its "+ Create a new template" button) so cancelEdit('tpl')
+// can switch back to it afterwards, same as startEditTemplate() below.
+function startCreateTemplate(){
+  resetTemplateForm('tpl');
+  const fromTab = currentTabName();
+  templateEditReturnTab = (fromTab && fromTab !== 'template-editor') ? fromTab : null;
+  switchTab('template-editor');
+  document.getElementById('tpl-name').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
 function startEditTemplate(t){
   const fromTab = currentTabName();
-  templateEditReturnTab = (fromTab && fromTab !== 'admintemplates') ? fromTab : null;
-  switchTab('admintemplates');
+  templateEditReturnTab = (fromTab && fromTab !== 'template-editor') ? fromTab : null;
+  switchTab('template-editor');
   editingItem.tpl = t.id;
   document.getElementById('tpl-name').value = t.name;
   document.getElementById('tpl-color').value = t.color || '#43C6AC';
@@ -3739,16 +3781,24 @@ function startEditTemplate(t){
   legBuilders.tpl = (t.legs_data && Array.isArray(t.legs_data)) ? JSON.parse(JSON.stringify(t.legs_data)) : [];
   renderLegRows('tpl');
   document.getElementById('tpl-submit-btn').textContent = 'Save changes';
-  document.getElementById('tpl-cancel-btn').style.display = 'block';
+  const tplHeading = document.getElementById('tpl-form-heading');
+  if(tplHeading) tplHeading.textContent = 'Edit template';
   document.getElementById('tpl-name').scrollIntoView({behavior:'smooth', block:'center'});
 }
 
-function cancelEdit(prefix){
+// The field-reset half of cancelEdit('tpl'/'st') — split out so
+// startCreateTemplate() can reset the form without triggering cancelEdit's
+// own "switch back to templateEditReturnTab" side effect (which would fire
+// on the OLD value of templateEditReturnTab, before this new create flow
+// gets a chance to set it).
+function resetTemplateForm(prefix){
   editingItem[prefix] = null;
   document.getElementById(prefix + '-name').value = '';
   document.getElementById(prefix + '-paid').value = '';
   if(prefix === 'tpl'){
     document.getElementById('tpl-category').value = '';
+    const tplHeading = document.getElementById('tpl-form-heading');
+    if(tplHeading) tplHeading.textContent = 'Create a new template';
   }
   setAllowedDaysOnForm(null, prefix);
   const copySel = document.getElementById(prefix + '-copy-from');
@@ -3758,7 +3808,15 @@ function cancelEdit(prefix){
   legBuilders[prefix] = [];
   renderLegRows(prefix);
   document.getElementById(prefix + '-submit-btn').textContent = prefix === 'st' ? 'Add shift type' : 'Create template';
-  document.getElementById(prefix + '-cancel-btn').style.display = 'none';
+  // 'st' (a personal shift type, edited inline on the Setup tab) only shows
+  // its Cancel button while actually editing; 'tpl' has its own dedicated
+  // screen (tab-template-editor) and always shows one, so there's nothing to
+  // toggle for it.
+  if(prefix === 'st') document.getElementById(prefix + '-cancel-btn').style.display = 'none';
+}
+
+function cancelEdit(prefix){
+  resetTemplateForm(prefix);
   if(prefix === 'tpl' && templateEditReturnTab){
     switchTab(templateEditReturnTab);
     templateEditReturnTab = null;
@@ -4381,6 +4439,7 @@ function finishRotaImport(pending){
   const { parsed, codeToId, codeToIdByDay, unmatched, createdCount } = pending;
   const statusEl = document.getElementById('tpl-import-status');
 
+  editingRtpl = null; // an import always starts a new rota template, never overwrites one mid-edit
   // Columns are Sun→Sat, so start the week on Sunday.
   rtplWeeks = parsed.length;
   rtplPattern = [];
@@ -4390,21 +4449,31 @@ function finishRotaImport(pending){
     const byDay = codeToIdByDay[key];
     rtplPattern.push((byDay && byDay[dayIdx]) || codeToId[key] || '');
   }));
+  rtplLineNumbers = Array(rtplWeeks).fill(''); // a fresh import has no line numbers yet
   document.getElementById('rtpl-weeks').value = String(rtplWeeks);
   document.getElementById('rtpl-week-start').value = '0';
   document.getElementById('rtpl-split-shifts-toggle').checked = false;
+  const rtplHeading = document.getElementById('rtpl-form-heading');
+  if(rtplHeading) rtplHeading.textContent = 'Create a rota template';
   renderRtplGrid();
   renderTemplatesBrowseList();
   if(typeof populateCopyFromSelects === 'function') populateCopyFromSelects();
-  const rtplSection = document.getElementById('rota-template-create-section');
-  if(rtplSection) rtplSection.scrollIntoView({ behavior:'smooth', block:'start' });
 
-  statusEl.style.color = 'var(--teal)';
-  let msg = 'Loaded ' + rtplWeeks + ' week' + (rtplWeeks !== 1 ? 's' : '') + ' into the rota template below.';
+  // Jump straight to the rota-template editor so the admin can see the
+  // filled-in grid right away and give it a name — same dedicated screen
+  // startCreateRotaTemplate()/startEditRotaTemplate() use.
+  const fromTab = currentTabName();
+  templateEditReturnTab = (fromTab && fromTab !== 'rota-template-editor') ? fromTab : null;
+  switchTab('rota-template-editor');
+  document.getElementById('rtpl-name').scrollIntoView({ behavior:'smooth', block:'start' });
+
+  let msg = 'Loaded ' + rtplWeeks + ' week' + (rtplWeeks !== 1 ? 's' : '') + ' into the rota template.';
   if(createdCount) msg += ' Created ' + createdCount + ' new shift template' + (createdCount !== 1 ? 's' : '') + '.';
   if(unmatched.length) msg += ' No existing match for: ' + unmatched.join(', ') + ' (left blank).';
-  msg += ' Give it a name, then press Create rota template.';
-  statusEl.textContent = msg;
+  statusEl.style.color = 'var(--teal)';
+  statusEl.textContent = msg; // shown back on Admin Templates if they return there via Cancel
+  const rtplStatusEl = document.getElementById('rtpl-status');
+  if(rtplStatusEl){ rtplStatusEl.style.color = 'var(--teal)'; rtplStatusEl.textContent = msg + ' Give it a name, then press Create rota template.'; }
 }
 
 function togglePaySection(){
@@ -6559,22 +6628,35 @@ async function saveRotaTemplate(){
     statusEl.textContent = error.message;
     return;
   }
-  if(editingRtpl){
+  const wasEditing = !!editingRtpl;
+  if(wasEditing){
     rotaTemplates = rotaTemplates.map(r => r.id===data.id ? data : r);
   } else {
     rotaTemplates.push(data);
   }
-  cancelRotaTemplateEdit();
+  cancelRotaTemplateEdit(); // also returns to templateEditReturnTab, if opened from there
   statusEl.style.color='var(--teal)';
-  statusEl.textContent = editingRtpl ? 'Rota template updated.' : 'Rota template created.';
+  statusEl.textContent = wasEditing ? 'Rota template updated.' : 'Rota template created.';
   renderRotaTemplateList();
   if(isAdmin) renderAdminBlocksSection();
 }
 
+// Opens the dedicated rota-template-editor tab (tab-rota-template-editor)
+// for a brand new rota template — same form as editing, just starting blank.
+// See startCreateTemplate() for why the reset is split out from
+// cancelRotaTemplateEdit() rather than just calling that directly.
+function startCreateRotaTemplate(){
+  resetRotaTemplateForm();
+  const fromTab = currentTabName();
+  templateEditReturnTab = (fromTab && fromTab !== 'rota-template-editor') ? fromTab : null;
+  switchTab('rota-template-editor');
+  document.getElementById('rtpl-name').scrollIntoView({behavior:'smooth', block:'start'});
+}
+
 function startEditRotaTemplate(rtpl){
   const fromTab = currentTabName();
-  templateEditReturnTab = (fromTab && fromTab !== 'admintemplates') ? fromTab : null;
-  switchTab('admintemplates');
+  templateEditReturnTab = (fromTab && fromTab !== 'rota-template-editor') ? fromTab : null;
+  switchTab('rota-template-editor');
   editingRtpl = rtpl.id;
   document.getElementById('rtpl-name').value = rtpl.name;
   document.getElementById('rtpl-desc-text').value = rtpl.description || '';
@@ -6589,11 +6671,12 @@ function startEditRotaTemplate(rtpl){
   document.getElementById('rtpl-split-shifts-toggle').checked = false;
   renderRtplGrid();
   document.getElementById('rtpl-submit-btn').textContent = 'Save changes';
-  document.getElementById('rtpl-cancel-btn').style.display = 'block';
-  document.getElementById('rota-template-create-section').scrollIntoView({behavior:'smooth', block:'start'});
+  const rtplHeading = document.getElementById('rtpl-form-heading');
+  if(rtplHeading) rtplHeading.textContent = 'Edit rota template';
+  document.getElementById('rtpl-name').scrollIntoView({behavior:'smooth', block:'start'});
 }
 
-function cancelRotaTemplateEdit(){
+function resetRotaTemplateForm(){
   editingRtpl = null;
   document.getElementById('rtpl-name').value = '';
   document.getElementById('rtpl-desc-text').value = '';
@@ -6605,7 +6688,12 @@ function cancelRotaTemplateEdit(){
   document.getElementById('rtpl-split-shifts-toggle').checked = false;
   renderRtplGrid();
   document.getElementById('rtpl-submit-btn').textContent = 'Create rota template';
-  document.getElementById('rtpl-cancel-btn').style.display = 'none';
+  const rtplHeading = document.getElementById('rtpl-form-heading');
+  if(rtplHeading) rtplHeading.textContent = 'Create a rota template';
+}
+
+function cancelRotaTemplateEdit(){
+  resetRotaTemplateForm();
   if(templateEditReturnTab){
     switchTab(templateEditReturnTab);
     templateEditReturnTab = null;
