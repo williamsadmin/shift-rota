@@ -1871,6 +1871,12 @@ function buildDayDetailHTML(dateStr, shifts, shiftId, ownerPrefix, applyEarlySta
   const dateObj = new Date(dateStr + 'T00:00:00');
   const dateLabel = dateObj.toLocaleDateString(undefined, {weekday:'long', day:'numeric', month:'long', year:'numeric'});
   let html = '<p style="margin:0 0 8px;font-weight:600;color:var(--text);">' + ownerPrefix + dateLabel + '</p>';
+  const dayAnnouncements = announcementsForDate(dateStr);
+  if(dayAnnouncements.length){
+    html += dayAnnouncements.map(a =>
+      '<p class="help" style="margin:0 0 8px;color:var(--amber);">📢 ' + escapeHtml(a.message) + '</p>'
+    ).join('');
+  }
   if(shiftId === '__holiday__'){
     html += '<p class="help" style="margin:0;">Holiday</p>';
   } else if(shifts && shifts.length){
@@ -6993,6 +6999,10 @@ async function loadAnnouncements(){
   const { data, error } = await sb.from('announcements').select('*').order('start_date');
   allAnnouncements = error ? [] : (data || []);
   renderAnnouncementBanner();
+  // renderCalendarTab() already ran during init, before this had loaded —
+  // without this, the per-day 📢 flags never appear until something else
+  // happens to re-render the calendar (e.g. switching tabs away and back).
+  renderCalendarTab();
 }
 
 function renderAnnouncementBanner(){
