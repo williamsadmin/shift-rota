@@ -658,6 +658,10 @@
               <label>That date is in…</label>
               <select id="rtpl-apply-anchor-week" onchange="onRtplApplyAnchorChange()"></select>
             </div>
+            <div id="rtpl-apply-anchor-line-wrap" style="max-width:200px;display:none;">
+              <label>Or anchor by line number</label>
+              <select id="rtpl-apply-anchor-line" onchange="onRtplApplyAnchorLineChange()"></select>
+            </div>
           </div>
           <p class="help" style="margin:0 0 8px;">Tap a day below to use it as the start date instead.</p>
           <div id="rtpl-apply-preview-grid" class="grid"></div>
@@ -6694,11 +6698,35 @@ function cancelApplyRotaTemplate(){
 function populateRtplApplyAnchorWeekSelect(){
   const sel = document.getElementById('rtpl-apply-anchor-week');
   if(!sel || !pendingRotaTemplateApply) return;
-  const w = (pendingRotaTemplateApply.legs_data || {}).weeks || 5;
+  const ld = pendingRotaTemplateApply.legs_data || {};
+  const w = ld.weeks || 5;
   const prev = parseInt(sel.value, 10) || 1;
   sel.innerHTML = '';
   for(let i=1;i<=w;i++){ const o=document.createElement('option'); o.value=i; o.textContent='Week '+i; sel.appendChild(o); }
   sel.value = String(Math.min(prev, w));
+
+  // Anchoring by line number is only offered when this template actually has
+  // per-week line numbers set — same values as the week select above (a
+  // 1-based week index), just labeled by line number for when you only know
+  // the line and not which week of the pattern it falls in.
+  const lineNumbers = ld.line_numbers || [];
+  const lineWrap = document.getElementById('rtpl-apply-anchor-line-wrap');
+  const lineSel = document.getElementById('rtpl-apply-anchor-line');
+  const hasLines = lineNumbers.some(n => n);
+  if(lineWrap) lineWrap.style.display = hasLines ? '' : 'none';
+  if(lineSel){
+    lineSel.innerHTML = '<option value="">—</option>' + lineNumbers.map((n, i) =>
+      n ? '<option value="' + (i+1) + '">Line ' + escapeHtml(String(n)) + ' (Week ' + (i+1) + ')</option>' : ''
+    ).join('');
+    lineSel.value = lineNumbers[parseInt(sel.value, 10) - 1] ? sel.value : '';
+  }
+}
+
+function onRtplApplyAnchorLineChange(){
+  const lineSel = document.getElementById('rtpl-apply-anchor-line');
+  if(!lineSel || !lineSel.value) return;
+  document.getElementById('rtpl-apply-anchor-week').value = lineSel.value;
+  onRtplApplyAnchorChange();
 }
 
 function onRtplApplyAnchorChange(){
@@ -6708,6 +6736,11 @@ function onRtplApplyAnchorChange(){
   const wsd = ld.week_start_day || 0;
   const anchorDate = document.getElementById('rtpl-apply-anchor-date').value;
   const anchorWeek = parseInt(document.getElementById('rtpl-apply-anchor-week').value, 10) || 1;
+  const lineSel = document.getElementById('rtpl-apply-anchor-line');
+  if(lineSel){
+    const lineForWeek = (ld.line_numbers || [])[anchorWeek - 1];
+    lineSel.value = lineForWeek ? String(anchorWeek) : '';
+  }
   const rotaStartForPreview = anchorDate ? computeRotaStartFromAnchor(anchorDate, anchorWeek, wsd) : null;
   renderRtplPreviewGrid('rtpl-apply-preview-grid', ld.pattern || [], weeksN, wsd, rotaStartForPreview, templates, setRtplApplyAnchorFromPreview, ld.line_numbers || []);
 }
@@ -7463,7 +7496,8 @@ async function loadAdminUserRota(userId, container, btn){
     rota_start: (r && r.rota_start) || '',
     weeks: w,
     week_start_day: (r && r.week_start_day != null) ? r.week_start_day : 0,
-    pattern: resizePatternArray((r && r.original_pattern) || [], w)
+    pattern: resizePatternArray((r && r.original_pattern) || [], w),
+    rota_template_id: (r && r.rota_template_id) || null
   };
   adminEditRota = {
     userId,
@@ -7474,6 +7508,12 @@ async function loadAdminUserRota(userId, container, btn){
     anchorWeek: 1,
     pattern: [...base.pattern],
     splitMode: base.pattern.some(v => splitShiftIds(v).length > 1),
+    // Which rota template (if any) this pattern was last applied from — see
+    // applyRotaTemplateToAdmin() — carried through to rota_settings.rota_template_id
+    // by adminReplaceRota()/adminScheduleRota() so line numbers (Account tab's
+    // "Show line numbers") work the same whether a rota was applied here or
+    // via the user's own "Rota templates" page.
+    rotaTemplateId: base.rota_template_id,
     shiftTypes: stRes.data || [],
     base: base,                                                    // the user's current rota (preserved when scheduling)
     schedule: Array.isArray(r && r.schedule) ? r.schedule : []     // their existing scheduled changes
@@ -7689,6 +7729,29 @@ function renderAdminRotaGrid(container){
   awSel.onchange=()=>{ ar.anchorWeek=parseInt(awSel.value,10); adminRecomputeRotaStart(); renderAdminRotaGrid(container); };
   awWrap.appendChild(awSel);
   anchorRow.appendChild(adHeading); anchorRow.appendChild(adWrap); anchorRow.appendChild(awWrap);
+
+  // If the currently-applied rota template has per-week line numbers, offer
+  // anchoring by line number too — same week values as the select above,
+  // just labeled by line number, for when you only know the line and not
+  // which week of the pattern it falls in.
+  const appliedTpl = ar.rotaTemplateId ? rotaTemplates.find(t => t.id === ar.rotaTemplateId) : null;
+  const lineNumbers = (appliedTpl && appliedTpl.legs_data && appliedTpl.legs_data.line_numbers) || [];
+  if(lineNumbers.some(n => n)){
+    const alWrap = mkWrap('Or anchor by line number', '200px');
+    const alSel = document.createElement('select');
+    alSel.innerHTML = '<option value="">—</option>';
+    lineNumbers.forEach((n, i) => {
+      if(!n) return;
+      const o = document.createElement('option');
+      o.value = i+1; o.textContent = 'Line ' + n + ' (Week ' + (i+1) + ')';
+      if(i+1 === ar.anchorWeek) o.selected = true;
+      alSel.appendChild(o);
+    });
+    alSel.onchange=()=>{ if(!alSel.value) return; ar.anchorWeek=parseInt(alSel.value,10); adminRecomputeRotaStart(); renderAdminRotaGrid(container); };
+    alWrap.appendChild(alSel);
+    anchorRow.appendChild(alWrap);
+  }
+
   container.appendChild(anchorRow);
 
   // Live preview of the pattern below, on real calendar dates per the anchor
@@ -7901,6 +7964,7 @@ async function adminPersistRota(baseObj, schedule, saveStatus, successMsg){
     weeks: baseObj.weeks,
     week_start_day: baseObj.week_start_day,
     original_pattern: baseObj.pattern,
+    rota_template_id: baseObj.rota_template_id || null,
     updated_at: new Date().toISOString()
   };
   if(schedule && schedule.length) payload.schedule = schedule;
@@ -7921,7 +7985,7 @@ async function adminScheduleRota(saveStatus){
   if(!ar.anchorDate){ saveStatus.style.color='var(--danger)'; saveStatus.textContent='Set the anchor date above — that\'s the date the new rota starts.'; return; }
   const todayKey = dateKeyLocal(new Date());
   if(ar.anchorDate <= todayKey && !confirm('The new rota starts from ' + fmtDateLabel(ar.anchorDate) + ', which isn\'t in the future — days from then will use the new rota. Continue?')) return;
-  const entry = { effective_from: ar.anchorDate, rota_start: ar.rotaStart, weeks: ar.weeks, week_start_day: ar.weekStartDay, pattern: [...ar.pattern] };
+  const entry = { effective_from: ar.anchorDate, rota_start: ar.rotaStart, weeks: ar.weeks, week_start_day: ar.weekStartDay, pattern: [...ar.pattern], rota_template_id: ar.rotaTemplateId || null };
   ar.schedule = ar.schedule.filter(s => s.effective_from !== ar.anchorDate).concat([entry]);
   const ok = await adminPersistRota(ar.base, ar.schedule, saveStatus,
     'Saved — the new rota starts ' + fmtDateLabel(ar.anchorDate) + '; the current rota is kept before then.');
@@ -7930,7 +7994,7 @@ async function adminScheduleRota(saveStatus){
 
 async function adminReplaceRota(saveStatus){
   const ar = adminEditRota;
-  const newBase = { rota_start: ar.rotaStart || '', weeks: ar.weeks, week_start_day: ar.weekStartDay, pattern: [...ar.pattern] };
+  const newBase = { rota_start: ar.rotaStart || '', weeks: ar.weeks, week_start_day: ar.weekStartDay, pattern: [...ar.pattern], rota_template_id: ar.rotaTemplateId || null };
   const ok = await adminPersistRota(newBase, ar.schedule, saveStatus, 'Rota replaced.');
   if(ok) ar.base = newBase;
 }
@@ -7974,6 +8038,7 @@ async function applyRotaTemplateToAdmin(rtpl, container){
   ar.weekStartDay = wsd;
   ar.pattern = resizePatternArray(tplPattern.map(v => joinShiftIds(splitShiftIds(v).map(id => idMap[id] || '').filter(Boolean))), newWeeks);
   ar.splitMode = ar.pattern.some(v => splitShiftIds(v).length > 1);
+  ar.rotaTemplateId = rtpl.id;
   if(ar.anchorWeek > ar.weeks) ar.anchorWeek = ar.weeks;
   adminRecomputeRotaStart(); // week_start_day just changed — keep the preview's real dates in sync with it
   renderAdminRotaGrid(container);
